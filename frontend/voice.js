@@ -17,8 +17,7 @@
     });
   }
 
-  const currentUser = window.voxaApi.getCurrentUser();
-  document.getElementById("voiceUserEmail").textContent = currentUser?.email || "";
+  document.getElementById("voiceUserEmail").textContent = window.voxaApi.getCurrentUser()?.email || "";
 
   const startButton = document.getElementById("startVoiceButton");
   const stopButton = document.getElementById("stopVoiceButton");
@@ -29,18 +28,22 @@
   const spokenResult = document.getElementById("spokenResult");
   const parsedSummary = document.getElementById("parsedSummary");
   const parsedConfidence = document.getElementById("parsedConfidence");
+  const matchedSuggestion = document.getElementById("matchedSuggestion");
   const confirmButton = document.getElementById("confirmVoiceButton");
-  const retryButton = document.getElementById("retryVoiceButton");
+  const editButton = document.getElementById("editVoiceButton");
+  const cancelButton = document.getElementById("cancelVoiceButton");
   const micOrb = document.getElementById("micOrb");
 
   let recognition = null;
   let activeSessionId = 0;
+  let shouldAutoRestart = false;
+  let manualStop = false;
+  let recognitionRunning = false;
   let isListening = false;
   let isParsing = false;
-  let stopRequested = false;
   let finalTranscript = "";
   let interimTranscript = "";
-  let parsedCommand = null;
+  let parsedPreview = null;
 
   function sanitizeTranscript(text) {
     return (text || "").replace(/\s+/g, " ").trim();
@@ -51,7 +54,8 @@
     spokenResult.textContent = "";
     parsedSummary.textContent = "";
     parsedConfidence.textContent = "";
-    parsedCommand = null;
+    matchedSuggestion.textContent = "";
+    parsedPreview = null;
   }
 
   function setVoiceTone(tone) {
@@ -112,154 +116,134 @@
     startButton.textContent = next.startLabel;
     startButton.disabled = next.startDisabled || isParsing;
     confirmButton.disabled = isParsing;
-    retryButton.disabled = isParsing;
+    editButton.disabled = isParsing;
+    cancelButton.disabled = isParsing;
   }
 
-  function formatCommandSummary(command) {
-    const fragments = [
-      `${command.action} ${command.type}`,
-      command.title ? `"${command.title}"` : "",
-      command.category && command.category !== "general" ? `in ${command.category}` : "",
-      command.date ? `on ${command.date}` : "",
-      command.time ? `at ${command.time}` : "",
-      command.repeat ? `repeat ${command.repeat}` : "",
-    ].filter(Boolean);
-
-    return fragments.join(" | ");
-  }
-
-  function formatConfidence(command) {
-    const percentage = Math.round((command.confidence || 0) * 100);
-    if (percentage >= 80) {
-      return `${percentage}% confidence | strong match`;
-    }
-    if (percentage >= 60) {
-      return `${percentage}% confidence | looks good, please review`;
-    }
-    return `${percentage}% confidence | ambiguous, review before confirming`;
-  }
-
-  function buildRecognition(sessionId) {
-    if (!recognitionApi) {
-      voiceFeedback.textContent = "This browser does not support the Web Speech API.";
-      startButton.disabled = true;
-      setInteractionState("error");
-      return null;
+  function ensureRecognition() {
+    if (!recognitionApi || recognition) {
+      return recognition;
     }
 
-    const instance = new recognitionApi();
-    instance.continuous = true;
-    instance.interimResults = true;
-    instance.lang = "en-US";
+    recognition = new recognitionApi();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-IN";
 
-    instance.onresult = (event) => {
-      if (sessionId !== activeSessionId) {
-        return;
-      }
+    recognition.onstart = () => {
+      recognitionRunning = true;
+      console.debug("[Voice] recognition started", { sessionId: activeSessionId });
+    };
 
+    recognition.onresult = (event) => {
       const finalParts = [];
       const interimParts = [];
 
       for (let index = 0; index < event.results.length; index += 1) {
-        const transcript = sanitizeTranscript(event.results[index][0].transcript);
-        if (!transcript) {
+        const text = sanitizeTranscript(event.results[index][0].transcript);
+        if (!text) {
           continue;
         }
 
         if (event.results[index].isFinal) {
-          finalParts.push(transcript);
+          finalParts.push(text);
         } else {
-          interimParts.push(transcript);
+          interimParts.push(text);
         }
       }
 
       finalTranscript = sanitizeTranscript(finalParts.join(" "));
       interimTranscript = sanitizeTranscript(interimParts.join(" "));
-      liveText.textContent = sanitizeTranscript(
-        [finalTranscript, interimTranscript].filter(Boolean).join(" ")
-      ) || "Listening...";
+      liveText.textContent = sanitizeTranscript([finalTranscript, interimTranscript].join(" ")) || "Listening...";
 
-      console.debug("[Voice] transcript update", {
-        sessionId,
+      console.debug("[Voice] transcript", {
+        sessionId: activeSessionId,
         finalTranscript,
         interimTranscript,
-        liveText: liveText.textContent,
       });
     };
 
-    instance.onerror = (event) => {
-      if (sessionId !== activeSessionId) {
-        return;
-      }
+    recognition.onerror = (event) => {
+      const errorMessages = {
+        "audio-capture": "No microphone was found. Please check your mic.",
+        "not-allowed": "Microphone access was denied. Please allow mic permission and try again.",
+        "no-speech": "I did not hear anything yet. Keep speaking or try again.",
+        aborted: "Voice capture was interrupted. Try again.",
+      };
 
-      stopRequested = false;
-      voiceFeedback.textContent = `Voice error: ${event.error}`;
+      recognitionRunning = false;
+      shouldAutoRestart = false;
+      manualStop = false;
+      voiceFeedback.textContent = errorMessages[event.error] || `Voice error: ${event.error}`;
       setInteractionState("error");
     };
 
-    instance.onend = () => {
-      if (sessionId !== activeSessionId) {
-        return;
-      }
+    recognition.onend = () => {
+      recognitionRunning = false;
+      console.debug("[Voice] recognition ended", {
+        sessionId: activeSessionId,
+        manualStop,
+        shouldAutoRestart,
+      });
 
-      if (stopRequested) {
-        stopRequested = false;
+      if (manualStop) {
+        manualStop = false;
         handleStop();
         return;
       }
 
-      if (isListening) {
-        try {
-          instance.start();
-        } catch (_error) {
-          voiceFeedback.textContent = "Listening paused. Tap start to try again.";
-          setInteractionState("error");
-        }
+      if (shouldAutoRestart) {
+        window.setTimeout(() => {
+          if (!recognitionRunning && shouldAutoRestart) {
+            try {
+              recognition.start();
+            } catch (_error) {
+              voiceFeedback.textContent = "Listening paused. Tap Start Voice to continue.";
+              setInteractionState("error");
+            }
+          }
+        }, 120);
       }
     };
 
-    return instance;
+    return recognition;
   }
 
   function startVoice() {
-    activeSessionId += 1;
-    finalTranscript = "";
-    interimTranscript = "";
-    stopRequested = false;
-    liveText.textContent = "Listening...";
-    voiceFeedback.textContent = "Speak naturally. VoxaHabit is transcribing in real time.";
-    resetResult();
-    setInteractionState("listening");
-
-    if (recognition) {
-      try {
-        recognition.onend = null;
-        recognition.abort();
-      } catch (_error) {
-        console.debug("[Voice] previous session cleanup skipped");
-      }
-    }
-
-    recognition = buildRecognition(activeSessionId);
-    if (!recognition) {
+    const instance = ensureRecognition();
+    if (!instance) {
+      voiceFeedback.textContent = "This browser does not support the Web Speech API.";
+      setInteractionState("error");
       return;
     }
 
-    recognition.start();
+    activeSessionId += 1;
+    finalTranscript = "";
+    interimTranscript = "";
+    shouldAutoRestart = true;
+    manualStop = false;
+    resetResult();
+    liveText.textContent = "Listening...";
+    voiceFeedback.textContent = "Listening now. Speak naturally in one sentence or a few short phrases.";
+    setInteractionState("listening");
+
+    try {
+      if (recognitionRunning) {
+        recognition.abort();
+      }
+      recognition.start();
+    } catch (_error) {
+      voiceFeedback.textContent = "Voice recognition is already active. Try again in a moment.";
+    }
   }
 
   async function handleStop() {
-    const transcript = sanitizeTranscript(finalTranscript) || sanitizeTranscript(interimTranscript);
-    console.debug("[Voice] final transcript", {
-      sessionId: activeSessionId,
-      finalTranscript,
-      interimTranscript,
-      transcript,
-    });
+    const transcript = sanitizeTranscript(finalTranscript || interimTranscript || liveText.textContent);
+    console.debug("[Voice] final transcript", { transcript, finalTranscript, interimTranscript });
 
     if (!transcript || transcript === "Listening...") {
       liveText.textContent = "No speech captured. Try again.";
-      voiceFeedback.textContent = "We did not catch anything that time.";
+      voiceFeedback.textContent = "I did not capture enough speech to understand that.";
       setInteractionState("error");
       return;
     }
@@ -269,8 +253,8 @@
     voiceFeedback.textContent = "Understanding what you said...";
 
     try {
-      parsedCommand = await window.voxaApi.parseVoiceCommand(transcript);
-      console.debug("[Voice] parsed result", parsedCommand);
+      parsedPreview = await window.voxaApi.parseVoiceCommand(transcript);
+      console.debug("[Voice] parsed preview", parsedPreview);
     } catch (error) {
       isParsing = false;
       voiceFeedback.textContent = error.message || "Could not understand that request.";
@@ -278,57 +262,89 @@
       return;
     }
 
+    const previewUi = window.voxaCommandParser.formatPreview(parsedPreview);
     isParsing = false;
     spokenResult.textContent = transcript;
-    parsedSummary.textContent = formatCommandSummary(parsedCommand);
-    parsedConfidence.textContent = formatConfidence(parsedCommand);
+    parsedSummary.textContent = previewUi.headline;
+    parsedConfidence.textContent = [
+      `Action: ${previewUi.actionLabel}`,
+      `Entity: ${previewUi.entityLabel}`,
+      previewUi.targetLabel ? `Target: ${previewUi.targetLabel}` : "",
+      ...previewUi.details.map((detail) => `${detail.label}: ${detail.value}`),
+      previewUi.confidenceLabel,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    matchedSuggestion.textContent =
+      previewUi.suggestion ||
+      (parsedPreview.needsConfirmation
+        ? "Please review before you confirm."
+        : "Looks good. Confirm when you are ready.");
+
     voiceResult.classList.remove("hidden");
-    voiceFeedback.textContent = "Review the command and confirm if it looks right.";
+    voiceFeedback.textContent = parsedPreview.needsConfirmation
+      ? "Please confirm the suggestion before VoxaHabit makes any change."
+      : "Review and confirm when you are ready.";
     setInteractionState("ready");
   }
 
   function stopVoice() {
-    if (!recognition || !isListening) {
+    const instance = ensureRecognition();
+    if (!instance || !isListening) {
       return;
     }
 
-    stopRequested = true;
+    shouldAutoRestart = false;
+    manualStop = true;
     setInteractionState("processing");
     voiceFeedback.textContent = "Wrapping up your transcript...";
-    recognition.stop();
+    instance.stop();
   }
 
   async function confirmVoice() {
-    if (!parsedCommand) {
+    if (!parsedPreview) {
       return;
     }
 
     try {
       isParsing = true;
       setInteractionState("processing");
-      voiceFeedback.textContent = "Applying your request...";
-      const result = await window.voxaApi.executeVoiceCommand(parsedCommand);
-      console.debug("[Voice] API execution result", result);
+      voiceFeedback.textContent = parsedPreview.needsConfirmation
+        ? "Applying the confirmed action..."
+        : "Executing your request...";
+
+      const result = await window.voxaApi.executeVoiceCommand(parsedPreview);
+      console.debug("[Voice] execution result", result);
       isParsing = false;
       voiceState.textContent = "Completed";
       setVoiceTone("ready");
       voiceFeedback.textContent = result.message;
-      setTimeout(() => {
+      window.setTimeout(() => {
         window.location.href = "/pages/app.html";
       }, 700);
     } catch (error) {
       isParsing = false;
-      voiceFeedback.textContent = error.message;
+      voiceFeedback.textContent = error.message || "Could not complete that action.";
       setInteractionState("error");
     }
   }
 
-  function retryVoice() {
-    stopRequested = false;
+  function editVoice() {
+    finalTranscript = "";
+    interimTranscript = "";
+    liveText.textContent = spokenResult.textContent || "Your speech will appear here in real time.";
+    voiceFeedback.textContent = "Say it again with a small correction, then confirm the new suggestion.";
+    resetResult();
+    setInteractionState("idle");
+  }
+
+  function cancelVoice() {
+    shouldAutoRestart = false;
+    manualStop = false;
     finalTranscript = "";
     interimTranscript = "";
     liveText.textContent = "Your speech will appear here in real time.";
-    voiceFeedback.textContent = "Try again. Speak clearly and keep the command short.";
+    voiceFeedback.textContent = "Nothing was changed. Start again whenever you are ready.";
     resetResult();
     setInteractionState("idle");
   }
@@ -336,7 +352,9 @@
   startButton.addEventListener("click", startVoice);
   stopButton.addEventListener("click", stopVoice);
   confirmButton.addEventListener("click", confirmVoice);
-  retryButton.addEventListener("click", retryVoice);
+  editButton.addEventListener("click", editVoice);
+  cancelButton.addEventListener("click", cancelVoice);
 
+  ensureRecognition();
   setInteractionState("idle");
 })();

@@ -1,5 +1,5 @@
 const { parseCommand, refineCommandWithGemini } = require("../utils/commandParser");
-const { executeCommand } = require("../services/commandService");
+const { executePreview, previewCommand } = require("../services/commandService");
 
 exports.parseVoiceCommand = async (req, res, next) => {
   try {
@@ -23,17 +23,21 @@ exports.parseVoiceCommand = async (req, res, next) => {
         }
       }
 
-      return res.json({
-        source,
-        command: {
+      const preview = await previewCommand(
+        req.user.id,
+        {
           ...baseCommand,
           ...refined,
           confidence: Number(refined.confidence || baseCommand.confidence || 0.6),
         },
-      });
+        source,
+      );
+
+      return res.json(preview);
     }
 
-    return res.json(await parseCommand(text));
+    const parsed = await parseCommand(text);
+    return res.json(await previewCommand(req.user.id, parsed.command, parsed.source));
   } catch (error) {
     return next(error);
   }
@@ -41,18 +45,25 @@ exports.parseVoiceCommand = async (req, res, next) => {
 
 exports.executeVoiceCommand = async (req, res, next) => {
   try {
-    const { text, command } = req.body;
+    const { text, command, preview } = req.body;
 
-    if (!text && !command) {
-      return res.status(400).json({ message: "Text or parsed command is required" });
+    if (!text && !command && !preview) {
+      return res.status(400).json({ message: "Text, command, or preview is required" });
     }
 
-    const parsedResult = command ? { source: "client", command } : await parseCommand(text);
-    const execution = await executeCommand(req.user.id, parsedResult.command, "voice");
+    let parsedPreview = preview;
+
+    if (!parsedPreview) {
+      const parsedResult = command ? { source: "client", command } : await parseCommand(text);
+      parsedPreview = await previewCommand(req.user.id, parsedResult.command, parsedResult.source);
+    }
+
+    const execution = await executePreview(req.user.id, parsedPreview, "voice");
 
     return res.json({
-      source: parsedResult.source,
-      command: parsedResult.command,
+      source: parsedPreview.source,
+      command: parsedPreview.command,
+      matchedItem: parsedPreview.matchedItem || null,
       execution,
     });
   } catch (error) {

@@ -1,101 +1,13 @@
 (function commandParserModule() {
-  const CACHE_KEY = "voxa_command_cache_v2";
-  const DEFAULT_CATEGORY = "general";
-  const CATEGORY_ALIASES = {
-    general: ["general"],
-    money: ["money", "finance", "financial", "payment", "cash"],
-    expense: ["expense", "expenses", "spent", "spend", "cost", "bill", "bills"],
-    personal: ["personal", "family", "mom", "dad", "friend", "home"],
-    work: ["work", "office", "client", "project", "meeting", "job"],
-    study: ["study", "exam", "school", "college", "class", "homework"],
-    health: ["health", "gym", "workout", "fitness", "medicine", "doctor", "water"],
-  };
-  const TIME_PHRASES = {
-    morning: "08:00",
-    early_morning: "06:00",
-    afternoon: "14:00",
-    evening: "19:00",
-    night: "21:00",
-    tonight: "21:00",
-    noon: "12:00",
-    midnight: "00:00",
-    "after lunch": "14:00",
-    "after dinner": "20:30",
-    "after breakfast": "09:00",
-    later: "18:00",
-  };
-  const FILLER_PATTERNS = [
-    /\bhey\b/gi,
-    /\bbro\b/gi,
-    /\bplease\b/gi,
-    /\bmaybe\b/gi,
-    /\bjust\b/gi,
-    /\bkind of\b/gi,
-    /\bsort of\b/gi,
-    /\bi think\b/gi,
-    /\bi guess\b/gi,
-    /\bi feel like\b/gi,
-    /\bi want to\b/gi,
-    /\bi would like to\b/gi,
-    /\bcan you\b/gi,
-    /\bcould you\b/gi,
-    /\bfor me\b/gi,
-  ];
-  const CONVERSATIONAL_PATTERNS = [
-    /\bi think\b/i,
-    /\bi need to\b/i,
-    /\bi should\b/i,
-    /\bi want to\b/i,
-    /\bmaybe\b/i,
-    /\bfrom tomorrow\b/i,
-    /\baround\b/i,
-    /\blater\b/i,
-  ];
-  const TYPE_KEYWORDS = {
-    note: [
-      "note",
-      "write",
-      "write down",
-      "jot",
-      "remember this",
-      "remember that",
-      "expense note",
-      "money note",
-      "personal note",
-      "work note",
-    ],
-    reminder: [
-      "remind",
-      "alert",
-      "ping me",
-      "don't let me forget",
-      "notify me",
-    ],
-    schedule: [
-      "schedule",
-      "meeting",
-      "calendar",
-      "appointment",
-      "plan",
-      "call with",
-      "set up a meeting",
-      "book",
-    ],
-    habit: [
-      "habit",
-      "daily",
-      "every day",
-      "every morning",
-      "every evening",
-      "routine",
-      "start going",
-      "from tomorrow",
-      "workout",
-      "gym",
-      "meditate",
-      "study daily",
-    ],
-  };
+  const CACHE_KEY = "voxa_command_cache_v3";
+  const REFERENCE_PATTERN = /\b(it|that|this|last one|last task|that task|that one)\b/i;
+  const TIME_FRAGMENT_PATTERN = /\b(?:at|around|by|for)?\s*\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|am|pm)?\b/gi;
+  const DATE_FRAGMENT_PATTERN = /\b(today|tomorrow|tonight|this weekend|next week)\b/gi;
+  const REPEAT_FRAGMENT_PATTERN = /\b(every day|daily|every week|weekly|every morning|every evening)\b/gi;
+
+  function normalizeWhitespace(value = "") {
+    return value.replace(/\s+/g, " ").trim();
+  }
 
   function readCache() {
     try {
@@ -114,43 +26,85 @@
     }
   }
 
-  function normalizeWhitespace(value) {
-    return value.replace(/\s+/g, " ").trim();
-  }
-
-  function stripFillers(text) {
+  function removeDateAndTimeFragments(text = "") {
     return normalizeWhitespace(
-      FILLER_PATTERNS.reduce((current, pattern) => current.replace(pattern, " "), text)
+      text
+        .replace(TIME_FRAGMENT_PATTERN, " ")
+        .replace(/\b(?:a\.?m\.?|p\.?m\.?|am|pm)\b/gi, " ")
+        .replace(DATE_FRAGMENT_PATTERN, " ")
+        .replace(REPEAT_FRAGMENT_PATTERN, " ")
+        .replace(/\s+[,.!?]/g, " ")
+        .replace(/[,.!?]+$/g, "")
     );
   }
 
-  function toIsoDate(date) {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-      date.getDate()
-    ).padStart(2, "0")}`;
+  function detectAction(normalizedText) {
+    if (/\b(delete|remove|cancel)\b/i.test(normalizedText)) {
+      return "delete";
+    }
+    if (/\b(complete|completed|done|finished)\b/i.test(normalizedText) || /\bmark\b.*\bdone\b/i.test(normalizedText)) {
+      return "complete";
+    }
+    if (/\bskip\b/i.test(normalizedText)) {
+      return "skip";
+    }
+    if (/\b(update|change|move|reschedule)\b/i.test(normalizedText)) {
+      return "update";
+    }
+    if (/\bsnooze\b/i.test(normalizedText)) {
+      return "snooze";
+    }
+    if (/\b(stop|dismiss)\b/i.test(normalizedText)) {
+      return "stop";
+    }
+    return "create";
   }
 
-  function nextWeekday(dayIndex) {
-    const date = new Date();
-    const difference = (dayIndex + 7 - date.getDay()) % 7 || 7;
-    date.setDate(date.getDate() + difference);
-    return toIsoDate(date);
+  function detectEntity(normalizedText, action) {
+    if (REFERENCE_PATTERN.test(normalizedText) && action !== "create") {
+      return "last";
+    }
+    if (/\b(note|write|remember|jot)\b/i.test(normalizedText)) {
+      return "note";
+    }
+    if (/\b(remind|reminder|alert|notify)\b/i.test(normalizedText)) {
+      return "reminder";
+    }
+    return "habit";
   }
 
-  function parseExplicitTime(text) {
-    const match = text.match(/\b(?:at|around|by)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
-    if (!match) {
+  function detectDate(normalizedText) {
+    const now = new Date();
+    if (/\btomorrow\b/i.test(normalizedText)) {
+      const next = new Date(now);
+      next.setDate(now.getDate() + 1);
+      return next.toISOString().slice(0, 10);
+    }
+    if (/\btoday\b/i.test(normalizedText)) {
+      return now.toISOString().slice(0, 10);
+    }
+    return "";
+  }
+
+  function detectTime(normalizedText) {
+    const explicitMatch = normalizedText.match(/\b(?:at|around|by|for)?\s*(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?|am|pm)?/i);
+    if (!explicitMatch) {
+      if (/\bmorning\b/i.test(normalizedText)) {
+        return "08:00";
+      }
+      if (/\bevening\b/i.test(normalizedText)) {
+        return "19:00";
+      }
       return "";
     }
 
-    let hour = Number(match[1]);
-    const minute = match[2] || "00";
-    const meridiem = match[3] ? match[3].toLowerCase() : "";
+    let hour = Number(explicitMatch[1]);
+    const minute = explicitMatch[2] || "00";
+    const meridiem = (explicitMatch[3] || "").toLowerCase().replace(/\./g, "");
 
     if (meridiem === "pm" && hour < 12) {
       hour += 12;
     }
-
     if (meridiem === "am" && hour === 12) {
       hour = 0;
     }
@@ -158,332 +112,57 @@
     return `${String(hour).padStart(2, "0")}:${minute}`;
   }
 
-  function detectTime(text) {
-    const normalized = text.toLowerCase();
-    const explicit = parseExplicitTime(normalized);
-    if (explicit) {
-      return explicit;
-    }
-
-    const matchedPhrase = Object.keys(TIME_PHRASES).find((phrase) => normalized.includes(phrase));
-    return matchedPhrase ? TIME_PHRASES[matchedPhrase] : "";
-  }
-
-  function detectDate(text) {
-    const normalized = text.toLowerCase();
-    const today = new Date();
-
-    if (normalized.includes("day after tomorrow")) {
-      const value = new Date(today);
-      value.setDate(value.getDate() + 2);
-      return toIsoDate(value);
-    }
-
-    if (normalized.includes("tomorrow")) {
-      const value = new Date(today);
-      value.setDate(value.getDate() + 1);
-      return toIsoDate(value);
-    }
-
-    if (normalized.includes("today")) {
-      return toIsoDate(today);
-    }
-
-    if (normalized.includes("this weekend") || normalized.includes("weekend")) {
-      return nextWeekday(6);
-    }
-
-    if (normalized.includes("next week")) {
-      const value = new Date(today);
-      value.setDate(value.getDate() + 7);
-      return toIsoDate(value);
-    }
-
-    const weekdays = {
-      sunday: 0,
-      monday: 1,
-      tuesday: 2,
-      wednesday: 3,
-      thursday: 4,
-      friday: 5,
-      saturday: 6,
-    };
-    const weekdayMatch = Object.keys(weekdays).find((weekday) => normalized.includes(weekday));
-    if (weekdayMatch) {
-      return nextWeekday(weekdays[weekdayMatch]);
-    }
-
-    const isoMatch = normalized.match(/\b(\d{4}-\d{2}-\d{2})\b/);
-    return isoMatch ? isoMatch[1] : "";
-  }
-
-  function detectRepeat(text) {
-    const normalized = text.toLowerCase();
-
-    if (
-      normalized.includes("every day") ||
-      normalized.includes("daily") ||
-      normalized.includes("every morning") ||
-      normalized.includes("every evening")
-    ) {
+  function detectRepeat(normalizedText) {
+    if (/\bevery day\b|\bdaily\b|\bevery morning\b|\bevery evening\b/i.test(normalizedText)) {
       return "daily";
     }
-
-    if (normalized.includes("every week") || normalized.includes("weekly")) {
+    if (/\bevery week\b|\bweekly\b/i.test(normalizedText)) {
       return "weekly";
     }
-
-    const weekdayPattern = normalized.match(/every\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/);
-    if (weekdayPattern) {
-      return `weekly:${weekdayPattern[1]}`;
-    }
-
-    if (normalized.includes("weekdays")) {
-      return "weekdays";
-    }
-
-    return "";
+    return "none";
   }
 
-  function detectAction(text) {
-    const normalized = text.toLowerCase();
+  function extractContent(rawText, action, entityType) {
+    let content = normalizeWhitespace(rawText);
+    content = content
+      .replace(/^(?:hey|please|bro|ok|okay)\s+/i, "")
+      .replace(/^(?:i want to|can you|could you)\s+/i, "")
+      .replace(/^(?:add|create|start|begin|delete|remove|cancel|complete|finished|finish|mark|skip|stop|snooze|update)\s+/i, "")
+      .replace(/^(?:a|an|the)\s+/i, "")
+      .replace(/\b(?:habit|task|note|reminder)\b/gi, " ");
 
-    if (
-      normalized.includes("delete") ||
-      normalized.includes("remove") ||
-      normalized.includes("cancel")
-    ) {
-      return "delete";
+    if (action === "complete") {
+      content = content.replace(/\b(?:done|completed|finished)\b/gi, " ");
     }
 
-    if (
-      normalized.includes("complete") ||
-      normalized.includes("mark") && normalized.includes("done") ||
-      normalized.includes("finished")
-    ) {
-      return "complete";
+    if (action !== "create" && REFERENCE_PATTERN.test(content)) {
+      return "";
     }
 
-    if (
-      normalized.includes("update") ||
-      normalized.includes("change") ||
-      normalized.includes("move") ||
-      normalized.includes("reschedule")
-    ) {
-      return "update";
+    content = removeDateAndTimeFragments(content);
+    if (entityType === "note") {
+      content = content.replace(/^that\s+/i, "");
     }
 
-    return "add";
+    return normalizeWhitespace(content);
   }
 
-  function scoreType(text) {
-    const normalized = text.toLowerCase();
-    const scores = { note: 0, reminder: 0, schedule: 0, habit: 0 };
-
-    Object.entries(TYPE_KEYWORDS).forEach(([type, keywords]) => {
-      keywords.forEach((keyword) => {
-        if (normalized.includes(keyword)) {
-          scores[type] += keyword.includes(" ") ? 2 : 1;
-        }
-      });
-    });
-
-    if (/\bnote\b/.test(normalized)) {
-      scores.note += 3;
-    }
-
-    if (/\bremind me\b/.test(normalized)) {
-      scores.reminder += 3;
-    }
-
-    if (/\bmeeting\b/.test(normalized) || /\bschedule\b/.test(normalized)) {
-      scores.schedule += 3;
-    }
-
-    if (/\bevery day\b/.test(normalized) || /\bdaily\b/.test(normalized)) {
-      scores.habit += 2;
-    }
-
-    const sorted = Object.entries(scores).sort((left, right) => right[1] - left[1]);
-    const [type, score] = sorted[0];
-    const secondScore = sorted[1][1];
-    const confidence = score === 0 ? 0.35 : Math.min(0.95, 0.45 + (score - secondScore) * 0.15);
-
-    if (score === 0) {
-      return { type: "habit", confidence: 0.35 };
-    }
-
-    return { type, confidence };
+  function buildCommand(overrides = {}) {
+    return {
+      action: "create",
+      entityType: "habit",
+      target: "",
+      content: "",
+      date: "",
+      time: "",
+      repeat: "none",
+      rawText: "",
+      confidence: 0.5,
+      ...overrides,
+    };
   }
 
-  function detectCategory(text) {
-    const normalized = text.toLowerCase();
-    const directMatch = normalized.match(/\b(?:under|in|into)\s+([a-z]+)\s+note\b/);
-    if (directMatch && CATEGORY_ALIASES[directMatch[1]]) {
-      return directMatch[1];
-    }
-
-    const category = Object.entries(CATEGORY_ALIASES).find(([, aliases]) =>
-      aliases.some((alias) => normalized.includes(alias))
-    );
-
-    return category ? category[0] : DEFAULT_CATEGORY;
-  }
-
-  function cleanTitle(text, context) {
-    const cleaned = stripFillers(text)
-      .replace(/\bplease\b/gi, " ")
-      .replace(/\bkindly\b/gi, " ")
-      .replace(/\bfor me\b/gi, " ")
-      .replace(/\s+/g, " ");
-
-    const patterns = [
-      /\bunder\s+[a-z]+\s+note\b/gi,
-      /\bin\s+[a-z]+\s+note\b/gi,
-      /\b(?:add|create|make|save|write|jot)\s+(?:a\s+|an\s+)?(?:new\s+)?/gi,
-      /\b(?:note|habit|reminder|meeting|schedule|event)\b/gi,
-      /\bthat\s+i\s+need\s+to\b/gi,
-      /\bthat\b/gi,
-      /\bplease\b/gi,
-      /\bfor tomorrow\b/gi,
-      /\bfrom tomorrow\b/gi,
-      /\btomorrow\b/gi,
-      /\btoday\b/gi,
-      /\bthis weekend\b/gi,
-      /\bnext week\b/gi,
-      /\blater\b/gi,
-      /\bevery day\b/gi,
-      /\bdaily\b/gi,
-      /\bevery morning\b/gi,
-      /\bevery evening\b/gi,
-      /\bafter dinner\b/gi,
-      /\bmorning\b/gi,
-      /\bevening\b/gi,
-      /\bat\s+\d{1,2}(?::\d{2})?\s*(am|pm)?\b/gi,
-      /\baround\s+\d{1,2}(?::\d{2})?\s*(am|pm)?\b/gi,
-    ];
-
-    let title = patterns.reduce((current, pattern) => current.replace(pattern, " "), cleaned);
-
-    if (context.type === "note") {
-      title = title
-        .replace(/\bremember\b/gi, " ")
-        .replace(/\badd that\b/gi, " ")
-        .replace(/\bi need to\b/gi, "")
-        .replace(/\bi spent\b/gi, "spent");
-    }
-
-    if (context.type === "reminder") {
-      title = title
-        .replace(/\bremind me\b/gi, " ")
-        .replace(/\balert me\b/gi, " ")
-        .replace(/^\s*to\s+/i, " ");
-    }
-
-    if (context.type === "schedule") {
-      title = title
-        .replace(/\bschedule\b/gi, " ")
-        .replace(/\bset up\b/gi, " ")
-        .replace(/\bbook\b/gi, " ")
-        .replace(/\bwith\b/gi, "with ");
-    }
-
-    if (context.type === "habit") {
-      title = title
-        .replace(/\bi should\b/gi, " ")
-        .replace(/\bstart\b/gi, " ")
-        .replace(/\bgoing to\b/gi, " ")
-        .replace(/\bgo to\b/gi, " ")
-        .replace(/\bdo\b/gi, " ")
-        .replace(/\bi want to\b/gi, " ");
-    }
-
-    title = normalizeWhitespace(title);
-    title = title.replace(/^(a|an)\s+/i, "");
-
-    if (
-      context.type === "note" &&
-      context.category &&
-      context.category !== DEFAULT_CATEGORY &&
-      title.toLowerCase().startsWith(`${context.category} `)
-    ) {
-      title = title.slice(context.category.length + 1);
-    }
-
-    if (context.type === "schedule" && title.startsWith("with ")) {
-      title = `meeting ${title}`;
-    }
-
-    if (context.type === "habit") {
-      const habitMatch =
-        title.match(/\b(gym|study|meditate|work out|workout|run|jog|read|drink water|walk)\b/i) ||
-        title.match(/\b([a-z0-9][a-z0-9 ]{1,40})\b/i);
-      title = habitMatch ? normalizeWhitespace(habitMatch[0]) : title;
-    }
-
-    return title || normalizeWhitespace(cleaned);
-  }
-
-  function buildStructuredSummary(result) {
-    const parts = [`${result.action} ${result.type}`];
-
-    if (result.category && result.category !== DEFAULT_CATEGORY) {
-      parts.push(`category ${result.category}`);
-    }
-
-    parts.push(`title "${result.title}"`);
-
-    if (result.date) {
-      parts.push(`date ${result.date}`);
-    }
-
-    if (result.time) {
-      parts.push(`time ${result.time}`);
-    }
-
-    if (result.repeat) {
-      parts.push(`repeat ${result.repeat}`);
-    }
-
-    return parts.join(" | ");
-  }
-
-  function shouldUseAi(result, normalizedText) {
-    const wordCount = normalizedText.split(" ").filter(Boolean).length;
-    const conversational = CONVERSATIONAL_PATTERNS.some((pattern) => pattern.test(normalizedText));
-    const lowConfidence = result.confidence < 0.7;
-    const longSentence = wordCount >= 9;
-    const weakExtraction = result.title.length < 4 || (!result.time && !result.date && conversational);
-
-    return lowConfidence || longSentence || weakExtraction;
-  }
-
-  async function refineWithAi(baseResult, rawText) {
-    if (!window.voxaApi?.refineVoiceCommand) {
-      return baseResult;
-    }
-
-    try {
-      const refined = await window.voxaApi.refineVoiceCommand(rawText, baseResult, {
-        allowIntentRefine: baseResult.confidence < 0.55,
-      });
-
-      return {
-        ...baseResult,
-        title: refined.title || baseResult.title,
-        time: refined.time || baseResult.time,
-        date: refined.date || baseResult.date,
-        repeat: refined.repeat || baseResult.repeat,
-        type: refined.type || baseResult.type,
-        category: refined.category || baseResult.category,
-        confidence: Math.max(baseResult.confidence, 0.75),
-      };
-    } catch (_error) {
-      return baseResult;
-    }
-  }
-
-  async function parse(rawText) {
+  function quickParse(rawText) {
     const input = normalizeWhitespace(rawText || "");
     const cache = readCache();
     const cached = cache[input.toLowerCase()];
@@ -491,59 +170,63 @@
       return cached;
     }
 
-    const normalized = stripFillers(input);
-    const typeResult = scoreType(normalized);
+    const normalized = input.toLowerCase().replace(/\./g, "");
     const action = detectAction(normalized);
-    const category = typeResult.type === "note" ? detectCategory(normalized) : DEFAULT_CATEGORY;
-    const time = detectTime(normalized);
+    const entityType = detectEntity(normalized, action);
+    const content = extractContent(input, action, entityType);
+    const target = content;
     const date = detectDate(normalized);
+    const time = detectTime(normalized);
     const repeat = detectRepeat(normalized);
-    const title = cleanTitle(normalized, { type: typeResult.type, action, category });
 
-    let result = {
-      type: typeResult.type,
+    let confidence = 0.52;
+    if (action !== "create") confidence += 0.12;
+    if (entityType !== "last") confidence += 0.1;
+    if (target) confidence += 0.12;
+    if (date) confidence += 0.05;
+    if (time) confidence += 0.05;
+    if (repeat !== "none") confidence += 0.05;
+    if (entityType === "last") confidence -= 0.1;
+
+    const result = buildCommand({
       action,
-      title,
-      category,
-      time,
+      entityType,
+      target,
+      content,
       date,
+      time,
       repeat,
-      confidence: typeResult.confidence,
       rawText: input,
-    };
-
-    if (shouldUseAi(result, normalized)) {
-      result = await refineWithAi(result, input);
-    }
-
-    result.summary = buildStructuredSummary(result);
+      confidence: Math.max(0.4, Math.min(0.9, Number(confidence.toFixed(2)))),
+    });
 
     cache[input.toLowerCase()] = result;
-    const trimmedEntries = Object.entries(cache).slice(-25);
-    writeCache(Object.fromEntries(trimmedEntries));
-
+    writeCache(cache);
     return result;
   }
 
-  const examples = [
-    "under money note add that 450 need to be given to ChatGPT",
-    "create a personal note that I need to call mom",
-    "remind me tomorrow evening to study",
-    "schedule a meeting with Rahul at 5 pm",
-    "I spent 200 on food add that in expense note",
-    "add gym every day at 6",
-    "bro from tomorrow I think I should go to gym daily in the morning around 6",
-  ];
+  function shouldUseAiAssist(command) {
+    const wordCount = (command.rawText || "").split(/\s+/).filter(Boolean).length;
+    return command.confidence < 0.7 || wordCount >= 10;
+  }
+
+  function formatPreview(preview) {
+    const understood = preview.understood || {};
+    return {
+      headline: understood.headline || `${preview.command.action} ${preview.command.entityType}`,
+      actionLabel: understood.actionLabel || preview.command.action,
+      entityLabel: understood.entityLabel || preview.command.entityType,
+      targetLabel: understood.targetLabel || preview.command.target || preview.command.content || "",
+      details: understood.details || [],
+      suggestion: understood.suggestion || "",
+      confidenceLabel: `${Math.round((preview.confidence || preview.command.confidence || 0) * 100)}% confidence`,
+    };
+  }
 
   window.voxaCommandParser = {
-    parse,
-    examples,
-    helpers: {
-      detectTime,
-      detectDate,
-      detectRepeat,
-      detectCategory,
-      detectAction,
-    },
+    quickParse,
+    removeDateAndTimeFragments,
+    shouldUseAiAssist,
+    formatPreview,
   };
 })();

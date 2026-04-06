@@ -4,7 +4,7 @@ const { parseVoiceCommand, executeVoiceCommand } = require("../controllers/aiCon
 
 const router = express.Router();
 
-router.post("/parse", parseVoiceCommand);
+router.post("/parse", auth, parseVoiceCommand);
 router.post("/execute", auth, executeVoiceCommand);
 
 module.exports = router;

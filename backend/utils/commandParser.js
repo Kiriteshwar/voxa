@@ -1,45 +1,182 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { parseTimeTo24Hour, parseRelativeDate } = require("./date");
 
+const ACTION_PATTERNS = [
+  { action: "delete", patterns: [/\bdelete\b/i, /\bremove\b/i, /\bcancel\b/i] },
+  {
+    action: "complete",
+    patterns: [/\bcomplete\b/i, /\bcompleted\b/i, /\bfinished\b/i, /\bdone\b/i, /\bmark(?:\s+it|\s+that|\s+.+)?\s+done\b/i],
+  },
+  { action: "skip", patterns: [/\bskip\b/i] },
+  { action: "update", patterns: [/\bupdate\b/i, /\bchange\b/i, /\breschedule\b/i, /\bmove\b/i] },
+  { action: "snooze", patterns: [/\bsnooze\b/i, /\bremind me later\b/i] },
+  { action: "stop", patterns: [/\bstop\b/i, /\bdismiss\b/i] },
+  { action: "create", patterns: [/\badd\b/i, /\bcreate\b/i, /\bstart\b/i, /\bbegin\b/i, /\bi want to\b/i, /\bnote that\b/i, /\bremind me\b/i] },
+];
+
+const ENTITY_PATTERNS = {
+  note: [/\bnote\b/i, /\bwrite\b/i, /\bremember\b/i, /\bjot\b/i],
+  reminder: [/\bremind\b/i, /\breminder\b/i, /\balert\b/i, /\bnotify\b/i],
+  habit: [/\bhabit\b/i, /\bdaily\b/i, /\bevery day\b/i, /\broutine\b/i, /\btask\b/i],
+};
+
+const REPEAT_PATTERNS = [
+  { repeat: "daily", pattern: /\bevery day\b|\bdaily\b|\bevery morning\b|\bevery evening\b/i },
+  { repeat: "weekly", pattern: /\bevery week\b|\bweekly\b/i },
+];
+
+const REFERENCE_PATTERN = /\b(it|that|this|last one|last task|that task|that one)\b/i;
+const TIME_FRAGMENT_PATTERN = /\b(?:at|around|by|for)?\s*\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|am|pm)?\b/gi;
+const DATE_FRAGMENT_PATTERN = /\b(today|tomorrow|tonight|this weekend|next week)\b/gi;
+const REPEAT_FRAGMENT_PATTERN = /\b(every day|daily|every week|weekly|every morning|every evening)\b/gi;
+const LEADING_FILLERS_PATTERN = /^(?:hey|okay|ok|please|bro|listen|voxa)\s+/i;
+
+function normalizeWhitespace(value = "") {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 function trimQuotes(value = "") {
-  return value.replace(/^["'\s]+|["'\s]+$/g, "").trim();
+  return normalizeWhitespace(value.replace(/^["'\s]+|["'\s]+$/g, ""));
 }
 
-function guessRepeat(text) {
-  const normalized = text.toLowerCase();
-  if (normalized.includes("every day") || normalized.includes("daily")) {
-    return "daily";
-  }
-  if (normalized.includes("every week") || normalized.includes("weekly")) {
-    return "weekly";
-  }
-  return "none";
-}
-
-function extractTime(text) {
-  const timeMatch = text.match(/\b(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b/i);
-  return parseTimeTo24Hour(timeMatch ? timeMatch[1] : "");
-}
-
-function extractContentAfterPrefix(text, prefixes) {
-  for (const prefix of prefixes) {
-    if (text.toLowerCase().startsWith(prefix)) {
-      return trimQuotes(text.slice(prefix.length));
-    }
-  }
-  return trimQuotes(text);
-}
-
-function removeDateAndTimeFragments(text) {
+function removeDateAndTimeFragments(text = "") {
   return trimQuotes(
     text
-      .replace(/\b(today|tomorrow)\b/gi, "")
-      .replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(am|pm)?\b/gi, "")
-      .replace(/\bevery day\b/gi, "")
-      .replace(/\bdaily\b/gi, "")
-      .replace(/\bevery week\b/gi, "")
-      .replace(/\bweekly\b/gi, "")
+      .replace(TIME_FRAGMENT_PATTERN, " ")
+      .replace(/\b(?:a\.?m\.?|p\.?m\.?|am|pm)\b/gi, " ")
+      .replace(DATE_FRAGMENT_PATTERN, " ")
+      .replace(REPEAT_FRAGMENT_PATTERN, " ")
+      .replace(/\s+,/g, ",")
+      .replace(/\s+[,.!?]/g, " ")
+      .replace(/[,.!?]\s*[,.!?]+/g, " ")
+      .replace(/[,.!?]+$/g, "")
+      .replace(/\s{2,}/g, " ")
   );
+}
+
+function detectAction(normalizedText) {
+  for (const entry of ACTION_PATTERNS) {
+    if (entry.patterns.some((pattern) => pattern.test(normalizedText))) {
+      return entry.action;
+    }
+  }
+  return "create";
+}
+
+function detectEntity(normalizedText, action) {
+  if (REFERENCE_PATTERN.test(normalizedText) && action !== "create") {
+    return "last";
+  }
+
+  for (const [entityType, patterns] of Object.entries(ENTITY_PATTERNS)) {
+    if (patterns.some((pattern) => pattern.test(normalizedText))) {
+      return entityType;
+    }
+  }
+
+  if (["snooze", "stop"].includes(action)) {
+    return "reminder";
+  }
+
+  if (["complete", "skip"].includes(action)) {
+    return "habit";
+  }
+
+  return "habit";
+}
+
+function guessRepeat(normalizedText) {
+  const matched = REPEAT_PATTERNS.find((entry) => entry.pattern.test(normalizedText));
+  return matched ? matched.repeat : "none";
+}
+
+function extractTime(normalizedText) {
+  const explicitMatch = normalizedText.match(/\b(?:at|around|by|for)?\s*(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|am|pm)?)/i);
+  if (explicitMatch) {
+    return parseTimeTo24Hour(explicitMatch[1].replace(/\./g, ""));
+  }
+
+  if (/\bmorning\b/i.test(normalizedText)) {
+    return "08:00";
+  }
+  if (/\bevening\b/i.test(normalizedText)) {
+    return "19:00";
+  }
+  if (/\bnight\b/i.test(normalizedText)) {
+    return "21:00";
+  }
+  return "";
+}
+
+function extractRawContent(rawText, action, entityType) {
+  const cleanedRaw = normalizeWhitespace(rawText.replace(LEADING_FILLERS_PATTERN, ""));
+  const actionPrefixes = [
+    /^i want to\s+/i,
+    /^please\s+/i,
+    /^can you\s+/i,
+    /^could you\s+/i,
+    /^note that\s+/i,
+    /^remind me to\s+/i,
+    /^remind me\s+/i,
+    /^add\s+/i,
+    /^create\s+/i,
+    /^start\s+/i,
+    /^begin\s+/i,
+    /^delete\s+/i,
+    /^remove\s+/i,
+    /^cancel\s+/i,
+    /^complete\s+/i,
+    /^finish\s+/i,
+    /^finished\s+/i,
+    /^mark\s+/i,
+    /^skip\s+/i,
+    /^stop\s+/i,
+    /^snooze\s+/i,
+    /^update\s+/i,
+  ];
+
+  let content = cleanedRaw;
+  actionPrefixes.forEach((pattern) => {
+    content = content.replace(pattern, "");
+  });
+
+  content = content.replace(/^(?:a|an|the)\s+/i, "");
+  content = content.replace(/\b(?:habit|task|note|reminder)\b/gi, " ");
+
+  if (action === "complete") {
+    content = content.replace(/\b(?:done|completed|finished)\b/gi, " ");
+  }
+
+  if (action === "delete") {
+    content = content.replace(/\b(?:it|that|this|last one|last task|that task|that one)\b/gi, " ");
+  }
+
+  if (action !== "create" && REFERENCE_PATTERN.test(content)) {
+    return "";
+  }
+
+  content = removeDateAndTimeFragments(content);
+
+  if (entityType === "note" && /^that\s+/i.test(content)) {
+    content = content.replace(/^that\s+/i, "");
+  }
+
+  return trimQuotes(content);
+}
+
+function extractTarget(rawText, action, entityType) {
+  const content = extractRawContent(rawText, action, entityType);
+
+  if (!content || REFERENCE_PATTERN.test(content)) {
+    return "";
+  }
+
+  if (entityType === "note") {
+    return content.slice(0, 80);
+  }
+
+  const compact = content.match(/[A-Za-z0-9][A-Za-z0-9\s-]{0,80}/);
+  return trimQuotes(compact ? compact[0] : content);
 }
 
 function buildCommand(overrides = {}) {
@@ -52,161 +189,76 @@ function buildCommand(overrides = {}) {
     time: "",
     repeat: "none",
     rawText: "",
+    confidence: 0.55,
     ...overrides,
   };
 }
 
+function computeConfidence({ action, entityType, target, date, time, repeat, rawText }) {
+  let score = 0.5;
+  if (action && action !== "create") {
+    score += 0.12;
+  }
+  if (entityType && entityType !== "last") {
+    score += 0.12;
+  }
+  if (target) {
+    score += 0.12;
+  }
+  if (date) {
+    score += 0.05;
+  }
+  if (time) {
+    score += 0.05;
+  }
+  if (repeat && repeat !== "none") {
+    score += 0.05;
+  }
+  if (entityType === "last" || !target) {
+    score -= 0.1;
+  }
+  if ((rawText || "").split(/\s+/).length >= 10) {
+    score -= 0.05;
+  }
+  return Math.max(0.4, Math.min(0.95, Number(score.toFixed(2))));
+}
+
 function fallbackParse(text) {
-  const rawText = (text || "").trim();
-  const normalized = rawText.toLowerCase();
-  const date = parseRelativeDate(normalized);
-  const time = extractTime(normalized);
-  const repeat = guessRepeat(normalized);
+  const rawText = normalizeWhitespace(text || "");
+  const normalized = rawText.toLowerCase().replace(/\./g, "");
 
   if (!rawText) {
     return buildCommand({ rawText });
   }
 
-  if (normalized.startsWith("create note") || normalized.startsWith("add note")) {
-    const content = extractContentAfterPrefix(normalized, ["create note", "add note"]);
-    return buildCommand({
-      action: "create",
-      entityType: "note",
-      content,
-      target: content,
-      rawText,
-    });
-  }
-
-  if (normalized.startsWith("delete note")) {
-    const target = extractContentAfterPrefix(normalized, ["delete note"]);
-    return buildCommand({
-      action: "delete",
-      entityType: "note",
-      target,
-      rawText,
-    });
-  }
-
-  if (normalized.startsWith("remind me to") || normalized.startsWith("create reminder")) {
-    const content = removeDateAndTimeFragments(
-      extractContentAfterPrefix(normalized, ["remind me to", "create reminder"])
-    );
-    return buildCommand({
-      action: "create",
-      entityType: "reminder",
-      content,
-      target: content,
-      date,
-      time,
-      repeat,
-      rawText,
-    });
-  }
-
-  if (normalized.startsWith("snooze")) {
-    const target = removeDateAndTimeFragments(extractContentAfterPrefix(normalized, ["snooze"]));
-    return buildCommand({
-      action: "snooze",
-      entityType: "reminder",
-      target,
-      time,
-      rawText,
-    });
-  }
-
-  if (normalized.startsWith("stop reminder") || normalized.startsWith("stop")) {
-    const target = extractContentAfterPrefix(normalized, ["stop reminder", "stop"]);
-    return buildCommand({
-      action: "stop",
-      entityType: "reminder",
-      target,
-      rawText,
-    });
-  }
-
-  if (normalized.startsWith("mark ") && (normalized.endsWith(" done") || normalized.endsWith(" completed"))) {
-    const target = normalized.replace(/^mark\s+/i, "").replace(/\s+(done|completed)$/i, "").trim();
-    return buildCommand({
-      action: "complete",
-      entityType: "habit",
-      target,
-      date,
-      rawText,
-    });
-  }
-
-  if (normalized.startsWith("skip ")) {
-    const target = extractContentAfterPrefix(normalized, ["skip"]);
-    return buildCommand({
-      action: "skip",
-      entityType: "habit",
-      target,
-      date,
-      rawText,
-    });
-  }
-
-  if (normalized.startsWith("delete habit")) {
-    const target = extractContentAfterPrefix(normalized, ["delete habit"]);
-    return buildCommand({
-      action: "delete",
-      entityType: "habit",
-      target,
-      rawText,
-    });
-  }
-
-  if (normalized.startsWith("delete reminder")) {
-    const target = extractContentAfterPrefix(normalized, ["delete reminder"]);
-    return buildCommand({
-      action: "delete",
-      entityType: "reminder",
-      target,
-      rawText,
-    });
-  }
-
-  if (normalized.startsWith("delete ")) {
-    const target = extractContentAfterPrefix(normalized, ["delete"]);
-    return buildCommand({
-      action: "delete",
-      entityType: "habit",
-      target,
-      rawText,
-    });
-  }
-
-  if (normalized.startsWith("add habit") || normalized.startsWith("create habit")) {
-    const target = removeDateAndTimeFragments(
-      extractContentAfterPrefix(normalized, ["add habit", "create habit"])
-    );
-    return buildCommand({
-      action: "create",
-      entityType: "habit",
-      target,
-      content: target,
-      date,
-      time,
-      repeat: repeat === "none" ? "daily" : repeat,
-      rawText,
-    });
-  }
+  const action = detectAction(normalized);
+  const entityType = detectEntity(normalized, action);
+  const date = parseRelativeDate(normalized);
+  const time = extractTime(normalized);
+  const repeat = guessRepeat(normalized);
+  const target = extractTarget(rawText, action, entityType);
+  const content = extractRawContent(rawText, action, entityType) || target;
 
   return buildCommand({
-    action: "create",
-    entityType: "habit",
-    target: removeDateAndTimeFragments(rawText),
-    content: removeDateAndTimeFragments(rawText),
+    action,
+    entityType,
+    target,
+    content,
     date,
     time,
-    repeat: repeat === "none" ? "daily" : repeat,
+    repeat,
     rawText,
+    confidence: computeConfidence({ action, entityType, target, date, time, repeat, rawText }),
   });
 }
 
 function sanitizeModelResponse(rawText) {
   return rawText.replace(/```json|```/gi, "").trim();
+}
+
+function shouldUseAi(command) {
+  const wordCount = (command.rawText || "").split(/\s+/).filter(Boolean).length;
+  return Boolean(process.env.GEMINI_API_KEY) && (command.confidence < 0.7 || wordCount >= 10);
 }
 
 async function generateGeminiJson(prompt) {
@@ -217,10 +269,9 @@ async function generateGeminiJson(prompt) {
     "gemini-1.5-flash-latest",
     "gemini-1.5-flash-8b",
   ].filter(Boolean);
-  const uniqueModels = [...new Set(modelCandidates)];
-  let lastError;
 
-  for (const modelName of uniqueModels) {
+  let lastError;
+  for (const modelName of [...new Set(modelCandidates)]) {
     try {
       const model = client.getGenerativeModel({ model: modelName });
       const result = await model.generateContent(prompt);
@@ -237,51 +288,21 @@ async function generateGeminiJson(prompt) {
   throw lastError || new Error("Gemini request failed");
 }
 
-async function parseWithGemini(text) {
-  const prompt = `
-Convert a voice command for a habit tracker app into JSON.
-Return only valid JSON with keys:
-action, entityType, target, content, date, time, repeat, rawText
-
-Rules:
-- action: create, complete, skip, delete, snooze, stop, update
-- entityType: habit, note, reminder
-- target: short name of the habit/note/reminder
-- content: full free-text content if useful
-- date: YYYY-MM-DD or empty string
-- time: HH:MM 24-hour or empty string
-- repeat: daily, weekly, custom, none
-- rawText: original command
-
-Examples:
-"Add habit gym at 6 am" => {"action":"create","entityType":"habit","target":"gym","content":"gym","date":"","time":"06:00","repeat":"daily","rawText":"Add habit gym at 6 am"}
-"Mark gym done" => {"action":"complete","entityType":"habit","target":"gym","content":"","date":"","time":"","repeat":"none","rawText":"Mark gym done"}
-"Create note buy groceries" => {"action":"create","entityType":"note","target":"buy groceries","content":"buy groceries","date":"","time":"","repeat":"none","rawText":"Create note buy groceries"}
-"Remind me to study at 9 pm" => {"action":"create","entityType":"reminder","target":"study","content":"study","date":"","time":"21:00","repeat":"none","rawText":"Remind me to study at 9 pm"}
-
-Input: "${text}"
-`;
-
-  return generateGeminiJson(prompt);
-}
-
 async function refineCommandWithGemini(text, baseCommand, options = {}) {
   const prompt = `
-Refine a structured productivity voice command.
+Refine this structured voice command for a productivity assistant.
 Return only valid JSON with keys:
-type, action, title, category, date, time, repeat, confidence
+action, entityType, target, content, date, time, repeat, confidence
 
 Rules:
-- Keep correct rule-based fields intact.
-- Only change "type" if allowIntentRefine is true and the current type is clearly wrong.
-- Do not remove already-correct date/time/repeat values.
-- Normalize time to HH:MM 24-hour when possible.
-- Normalize date to YYYY-MM-DD when possible.
-- category should stay "general" unless the text clearly implies another category.
-- confidence should be a number between 0 and 1.
+- Keep already-correct fields.
+- Only change action/entityType if allowIntentRefine is true and the current one is clearly wrong.
+- Preserve the natural target phrase.
+- Normalize date to YYYY-MM-DD and time to HH:MM when possible.
+- Do not invent data.
 
 allowIntentRefine: ${options.allowIntentRefine ? "true" : "false"}
-Current structured command: ${JSON.stringify(baseCommand)}
+Current command: ${JSON.stringify(baseCommand)}
 Raw speech: "${text}"
 `;
 
@@ -289,20 +310,35 @@ Raw speech: "${text}"
 }
 
 async function parseCommand(text) {
-  if (!process.env.GEMINI_API_KEY) {
-    return { source: "fallback", command: fallbackParse(text) };
+  const baseCommand = fallbackParse(text);
+  if (!shouldUseAi(baseCommand)) {
+    return { source: "rule-engine", command: baseCommand };
   }
 
   try {
-    const parsed = await parseWithGemini(text);
-    return { source: "gemini", command: buildCommand(parsed) };
-  } catch (error) {
-    return { source: "fallback", command: fallbackParse(text) };
+    const refined = await refineCommandWithGemini(text, baseCommand, {
+      allowIntentRefine: baseCommand.confidence < 0.6,
+    });
+
+    return {
+      source: "hybrid-ai",
+      command: buildCommand({
+        ...baseCommand,
+        ...refined,
+        rawText: baseCommand.rawText,
+        confidence: Math.max(Number(refined.confidence || 0), baseCommand.confidence, 0.75),
+      }),
+    };
+  } catch (_error) {
+    return { source: "rule-engine", command: baseCommand };
   }
 }
 
 module.exports = {
-  parseCommand,
   fallbackParse,
+  parseCommand,
   refineCommandWithGemini,
+  removeDateAndTimeFragments,
+  extractTarget,
+  extractRawContent,
 };

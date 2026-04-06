@@ -3,7 +3,7 @@ const STORAGE_KEYS = {
   user: "voxa_current_user",
 };
 
-const API_BASE = "https://voxa-production-e0f5.up.railway.app/api";
+const API_BASE = "/api";
 
 function readJson(key, fallback) {
   try {
@@ -261,7 +261,6 @@ window.voxaApi = {
   async refineVoiceCommand(text, baseCommand, options = {}) {
     const payload = await request("/ai/parse", {
       method: "POST",
-      auth: false,
       body: {
         text,
         baseCommand,
@@ -271,9 +270,18 @@ window.voxaApi = {
     return payload.command || baseCommand;
   },
   async parseVoiceCommand(text) {
-    const parsed = await window.voxaCommandParser.parse(text);
-    debugLog("parsed command", parsed);
-    return parsed;
+    const baseCommand = window.voxaCommandParser.quickParse(text);
+    debugLog("local quick parse", baseCommand);
+    const preview = await request("/ai/parse", {
+      method: "POST",
+      body: {
+        text,
+        baseCommand,
+        allowIntentRefine: window.voxaCommandParser.shouldUseAiAssist(baseCommand),
+      },
+    });
+    debugLog("voice preview", preview);
+    return preview;
   },
   async getDashboardData() {
     const [userPayload, habitsPayload, notesPayload, remindersPayload, schedulesPayload, logsPayload, analyticsPayload, activityPayload, historyPayload] =
@@ -422,103 +430,16 @@ window.voxaApi = {
     return response;
   },
   async executeVoiceCommand(command) {
-    let response;
-
-    if (command.type === "habit" && command.action === "add") {
-      response = await this.createHabit({
-        title: command.title,
-        repeat: command.repeat || "daily",
-        date: command.date || "",
-        time: command.time || "",
-      });
-      await this.getDashboardData();
-      return { message: `Habit created: ${response.name || command.title}` };
-    }
-
-    if (command.type === "note" && command.action === "add") {
-      const note = await this.saveNote({
-        title: command.title,
-        content: command.title,
-        category: command.category || "general",
-      });
-      await this.getDashboardData();
-      return { message: `Note created in ${note.category}: ${note.title}` };
-    }
-
-    if (command.type === "reminder" && command.action === "add") {
-      const reminder = await this.saveReminder({
-        title: command.title,
-        message: command.title,
-        date: command.date || getTodayKey(),
-        time: command.time || "18:00",
-      });
-      await this.getDashboardData();
-      return { message: `Reminder created: ${reminder.title}` };
-    }
-
-    if (command.type === "schedule" && command.action === "add") {
-      const schedule = await this.saveSchedule({
-        title: command.title,
-        category: command.category || "general",
-        date: command.date || getTodayKey(),
-        time: command.time || "17:00",
-      });
-      await this.getDashboardData();
-      return { message: `Schedule added: ${schedule.title}` };
-    }
-
-    const dashboard = await this.getDashboardData();
-
-    if (command.type === "habit") {
-      const habit = findByTitle(dashboard.habits, command.title);
-      if (!habit) {
-        throw new Error(`Could not find "${command.title}"`);
-      }
-
-      if (command.action === "complete") {
-        await this.markHabit(habit.id, "completed");
-        await this.getDashboardData();
-        return { message: `Habit completed: ${habit.title}` };
-      }
-
-      if (command.action === "delete") {
-        await this.deleteHabit(habit.id);
-        await this.getDashboardData();
-        return { message: `Habit deleted: ${habit.title}` };
-      }
-    }
-
-    if (command.type === "note" && command.action === "delete") {
-      const note = findByTitle(dashboard.notes, command.title);
-      if (!note) {
-        throw new Error(`Could not find "${command.title}"`);
-      }
-      await this.deleteNote(note.id);
-      await this.getDashboardData();
-      return { message: `Note deleted: ${note.title}` };
-    }
-
-    if (command.type === "reminder" && command.action === "delete") {
-      const reminder = findByTitle(dashboard.reminders, command.title);
-      if (!reminder) {
-        throw new Error(`Could not find "${command.title}"`);
-      }
-      await this.deleteReminder(reminder.id);
-      await this.getDashboardData();
-      return { message: `Reminder deleted: ${reminder.title}` };
-    }
-
-    if (command.type === "schedule" && command.action === "delete") {
-      const schedule = findByTitle(dashboard.schedules, command.title);
-      if (!schedule) {
-        throw new Error(`Could not find "${command.title}"`);
-      }
-      await this.deleteSchedule(schedule.id);
-      await this.getDashboardData();
-      return { message: `Schedule deleted: ${schedule.title}` };
-    }
-
-    throw new Error("Unsupported voice action");
+    const payload = await request("/ai/execute", {
+      method: "POST",
+      body: {
+        preview: command,
+      },
+    });
+    debugLog("voice execution", payload);
+    dispatchDataUpdated("voice:execute");
+    await this.getDashboardData();
+    return payload.execution;
   },
   formatDateTime(date) {
     return formatDateTime(date);

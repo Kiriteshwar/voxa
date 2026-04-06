@@ -13,6 +13,24 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    voiceContext: {
+      entityType: {
+        type: String,
+        default: "",
+      },
+      itemId: {
+        type: mongoose.Schema.Types.ObjectId,
+        default: null,
+      },
+      title: {
+        type: String,
+        default: "",
+      },
+      updatedAt: {
+        type: Date,
+        default: null,
+      },
+    },
   },
   {
     timestamps: true,
