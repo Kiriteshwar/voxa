@@ -468,10 +468,13 @@ window.voxaApi = {
       },
     });
     debugLog("voice execution", payload);
-    const primaryExecution = payload.execution || payload.executions?.[0] || null;
-    if (primaryExecution?.undoAvailable) {
+    const executions = payload.executions || (payload.execution ? [payload.execution] : []);
+    const primaryExecution = executions[0] || null;
+    const latestUndoableExecution = [...executions].reverse().find((execution) => execution?.undoAvailable) || null;
+
+    if (latestUndoableExecution?.undoAvailable) {
       setVoiceUndo({
-        message: primaryExecution.message,
+        message: latestUndoableExecution.message,
         createdAt: new Date().toISOString(),
       });
     } else {
@@ -479,7 +482,15 @@ window.voxaApi = {
     }
     dispatchDataUpdated("voice:execute");
     await this.getDashboardData();
-    return primaryExecution || { message: "Voice command executed." };
+    return {
+      message:
+        executions.length > 1
+          ? executions.map((execution) => execution.message).filter(Boolean).join(" ")
+          : primaryExecution?.message || "Voice command executed.",
+      executions,
+      execution: primaryExecution,
+      multiIntent: executions.length > 1,
+    };
   },
   getVoiceUndo() {
     return getVoiceUndo();

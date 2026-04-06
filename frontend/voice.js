@@ -320,7 +320,7 @@
       ],
       headline:
         preview.command.action === "create"
-          ? `Got it. I’ll work with "${preview.command.target || preview.command.content || "this item"}".`
+          ? `Got it. I'll work with "${preview.command.target || preview.command.content || "this item"}".`
           : `I think you want to ${preview.command.action} "${preview.command.target || preview.command.content || "this item"}".`,
     };
 
