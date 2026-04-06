@@ -1,0 +1,17 @@
+{
+  "name": "VoxaHabit",
+  "short_name": "VoxaHabit",
+  "start_url": "/pages/app.html",
+  "display": "standalone",
+  "background_color": "#f4efe6",
+  "theme_color": "#13293d",
+  "description": "Voice-first habit tracking with analytics and reminders.",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

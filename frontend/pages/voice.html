@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#16324f" />
+    <title>VoxaHabit | Voice</title>
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="voice-body" data-page="voice">
+    <main class="voice-layout">
+      <header class="voice-topbar">
+        <a href="/pages/app.html" class="back-link">Back</a>
+        <div class="voice-user" id="voiceUserEmail"></div>
+      </header>
+
+      <section class="voice-card">
+        <p class="eyebrow">Voice interaction</p>
+        <h1 class="voice-title">Say what you want to do</h1>
+        <p class="support-text">
+          Start listening, speak naturally, then confirm what VoxaHabit understood.
+        </p>
+
+        <div id="micOrb" class="mic-orb" aria-hidden="true">
+          <button id="startVoiceButton" class="mic-button" type="button">Start Voice</button>
+        </div>
+
+        <div class="live-status">
+          <span id="voiceState" class="state-pill">Idle</span>
+        </div>
+
+        <section class="transcript-card">
+          <h2>Live text</h2>
+          <p id="liveText" class="live-text">Your speech will appear here in real time.</p>
+        </section>
+
+        <button id="stopVoiceButton" class="stop-button hidden" type="button">Stop</button>
+
+        <section id="voiceResult" class="result-card hidden">
+          <div>
+            <p class="result-label">You said</p>
+            <p id="spokenResult" class="result-text"></p>
+          </div>
+          <div>
+            <p class="result-label">AI understood</p>
+            <p id="parsedSummary" class="result-text"></p>
+          </div>
+          <div>
+            <p class="result-label">Confidence</p>
+            <p id="parsedConfidence" class="result-text"></p>
+          </div>
+          <div class="button-row">
+            <button id="confirmVoiceButton" class="primary-action" type="button">Confirm</button>
+            <button id="retryVoiceButton" class="secondary-action" type="button">Retry</button>
+          </div>
+        </section>
+
+        <p id="voiceFeedback" class="support-text centered-text">
+          Tip: say things like "Add habit gym at 6 pm" or "Create note buy groceries".
+        </p>
+      </section>
+    </main>
+
+    <script src="/commandParser.js"></script>
+    <script src="/api.js"></script>
+    <script src="/voice.js"></script>
+  </body>
+</html>

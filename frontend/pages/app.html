@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#16324f" />
+    <title>VoxaHabit | Dashboard</title>
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="dashboard-body" data-page="app">
+    <div class="dashboard-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">VoxaHabit</p>
+          <h1 class="screen-title">Your routine, one voice command away</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="user-chip">
+            <span id="userEmail">Guest</span>
+          </div>
+          <button id="logoutButton" type="button" class="secondary-action compact-button">
+            Logout
+          </button>
+        </div>
+      </header>
+
+      <main class="dashboard-main">
+        <section class="hero-panel">
+          <div>
+            <p class="eyebrow">Primary action</p>
+            <h2>Talk to VoxaHabit</h2>
+            <p class="support-text">
+              Open the voice screen for live transcription and natural command control.
+            </p>
+          </div>
+          <a href="/pages/voice.html" class="voice-shortcut">Start Voice</a>
+        </section>
+
+        <section class="tab-panel is-active" data-tab-panel="voice">
+          <div class="section-card">
+            <h3>Voice shortcut</h3>
+            <p class="support-text">
+              Use voice to add habits, create notes, and set reminders without typing.
+            </p>
+            <a href="/pages/voice.html" class="primary-action button-link">Open Voice Screen</a>
+          </div>
+          <div class="section-card">
+            <h3>Recent activity</h3>
+            <div id="recentActivity" class="list-stack"></div>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-tab-panel="habits">
+          <div class="section-card">
+            <div class="section-heading">
+              <h3>Habits</h3>
+              <span id="habitCount" class="count-pill">0</span>
+            </div>
+            <form id="habitForm" class="stack-form">
+              <input id="habitName" type="text" placeholder="Habit name" required />
+              <div class="inline-grid">
+                <select id="habitRepeat">
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="custom">Custom date</option>
+                  <option value="none">One time</option>
+                </select>
+                <input id="habitDate" type="date" />
+              </div>
+              <input id="habitTime" type="time" />
+              <button type="submit" class="primary-action">Save Habit</button>
+            </form>
+          </div>
+          <div class="section-card">
+            <div id="habitList" class="list-stack"></div>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-tab-panel="notes">
+          <div class="section-card">
+            <div class="section-heading">
+              <h3>Notes</h3>
+              <span id="noteCount" class="count-pill">0</span>
+            </div>
+            <form id="noteForm" class="stack-form">
+              <input id="noteId" type="hidden" />
+              <input id="noteTitle" type="text" placeholder="Note title" />
+              <select id="noteCategory">
+                <option value="general">General</option>
+                <option value="money">Money</option>
+                <option value="expense">Expense</option>
+                <option value="personal">Personal</option>
+                <option value="work">Work</option>
+                <option value="study">Study</option>
+                <option value="health">Health</option>
+              </select>
+              <textarea id="noteContent" rows="4" placeholder="Write a quick note"></textarea>
+              <div class="button-row">
+                <button type="submit" class="primary-action">Save Note</button>
+                <button id="clearNoteButton" type="button" class="secondary-action">Clear</button>
+              </div>
+            </form>
+          </div>
+          <div class="section-card">
+            <div id="noteList" class="list-stack"></div>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-tab-panel="reminders">
+          <div class="section-card">
+            <div class="section-heading">
+              <h3>Reminders</h3>
+              <span id="reminderCount" class="count-pill">0</span>
+            </div>
+            <form id="reminderForm" class="stack-form">
+              <input id="reminderId" type="hidden" />
+              <input id="reminderTitle" type="text" placeholder="Reminder title" required />
+              <textarea id="reminderMessage" rows="3" placeholder="Optional reminder note"></textarea>
+              <div class="inline-grid">
+                <input id="reminderDate" type="date" required />
+                <input id="reminderTime" type="time" required />
+              </div>
+              <div class="button-row">
+                <button type="submit" class="primary-action">Save Reminder</button>
+                <button id="clearReminderButton" type="button" class="secondary-action">
+                  Clear
+                </button>
+              </div>
+            </form>
+          </div>
+          <div class="section-card">
+            <p id="reminderMessageText" class="support-text">
+              Browser notifications are optional in this frontend prototype.
+            </p>
+            <button id="notificationButton" type="button" class="secondary-action">
+              Enable Notifications
+            </button>
+            <div id="reminderList" class="list-stack"></div>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-tab-panel="analytics">
+          <div class="section-card">
+            <h3>Analytics</h3>
+            <div id="analyticsGrid" class="analytics-grid"></div>
+          </div>
+          <div class="section-card">
+            <h3>Upcoming</h3>
+            <div id="upcomingList" class="list-stack"></div>
+          </div>
+          <div class="section-card">
+            <h3>History</h3>
+            <div id="historyList" class="list-stack"></div>
+          </div>
+        </section>
+      </main>
+
+      <nav class="bottom-nav" aria-label="Primary navigation">
+        <button class="nav-item is-active" data-tab="voice" type="button">Voice</button>
+        <button class="nav-item" data-tab="habits" type="button">Habits</button>
+        <button class="nav-item" data-tab="notes" type="button">Notes</button>
+        <button class="nav-item" data-tab="reminders" type="button">Reminders</button>
+        <button class="nav-item" data-tab="analytics" type="button">Analytics</button>
+      </nav>
+    </div>
+
+    <script src="/commandParser.js"></script>
+    <script src="/api.js"></script>
+    <script src="/navigation.js"></script>
+  </body>
+</html>

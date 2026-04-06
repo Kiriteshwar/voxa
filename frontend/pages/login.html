@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#16324f" />
+    <title>VoxaHabit | Login</title>
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="auth-body" data-page="login">
+    <main class="auth-layout">
+      <section class="auth-card">
+        <p class="eyebrow">Voice-first habit tracking</p>
+        <h1 class="auth-title">Welcome to VoxaHabit</h1>
+        <p class="auth-copy">
+          Sign in to speak habits, save notes, and build your routine from anywhere.
+        </p>
+
+        <form id="authForm" class="auth-form">
+          <label class="field">
+            <span>Email</span>
+            <input id="email" type="email" placeholder="you@example.com" required />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input id="password" type="password" placeholder="Enter your password" required />
+          </label>
+          <button id="loginButton" type="submit" class="primary-action">Login</button>
+          <button id="registerButton" type="button" class="secondary-action">Register</button>
+        </form>
+
+        <p id="authMessage" class="support-text">
+          New here? Register once and your local demo workspace is ready instantly.
+        </p>
+      </section>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/navigation.js"></script>
+  </body>
+</html>
