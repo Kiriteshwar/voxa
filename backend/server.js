@@ -18,15 +18,27 @@ const aiRoutes = require("./routes/aiRoutes");
 
 const app = express();
 const port = process.env.PORT || 4000;
-const clientOrigin = process.env.CLIENT_ORIGIN || `http://localhost:${port}`;
 const frontendDir = path.join(__dirname, "..", "frontend");
+
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "https://voxa-hazel.vercel.app",
+];
 
 app.use(
   cors({
-    origin: clientOrigin,
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
   })
 );
+
 app.use(express.json());
 app.use(express.static(frontendDir));
 
