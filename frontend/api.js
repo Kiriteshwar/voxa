@@ -3,7 +3,7 @@ const STORAGE_KEYS = {
   user: "voxa_current_user",
 };
 
-const API_BASE = "https://voxa-production-de05.up.railway.app";
+const API_BASE = "https://voxa-production-de05.up.railway.app/api";
 
 function readJson(key, fallback) {
   try {
