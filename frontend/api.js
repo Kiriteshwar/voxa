@@ -1,6 +1,7 @@
 const STORAGE_KEYS = {
   token: "voxa_token",
   user: "voxa_current_user",
+  voiceUndo: "voxa_voice_undo",
 };
 
 const API_BASE = "/api";
@@ -51,6 +52,18 @@ function setSession(token, user) {
 function clearSession() {
   localStorage.removeItem(STORAGE_KEYS.token);
   localStorage.removeItem(STORAGE_KEYS.user);
+}
+
+function setVoiceUndo(payload) {
+  writeJson(STORAGE_KEYS.voiceUndo, payload);
+}
+
+function getVoiceUndo() {
+  return readJson(STORAGE_KEYS.voiceUndo, null);
+}
+
+function clearVoiceUndo() {
+  localStorage.removeItem(STORAGE_KEYS.voiceUndo);
 }
 
 function dispatchDataUpdated(source) {
@@ -270,14 +283,31 @@ window.voxaApi = {
     return payload.command || baseCommand;
   },
   async parseVoiceCommand(text) {
-    const baseCommand = window.voxaCommandParser.quickParse(text);
+    const parser = window.voxaCommandParser || {};
+    const quickParse =
+      typeof parser.quickParse === "function"
+        ? parser.quickParse.bind(parser)
+        : typeof parser.parse === "function"
+          ? parser.parse.bind(parser)
+          : null;
+
+    if (!quickParse) {
+      throw new Error("Voice parser is still loading. Please refresh and try again.");
+    }
+
+    const baseCommand = await quickParse(text);
+    const isCompound = /\s+(?:and then|then|and)\s+/i.test(text);
     debugLog("local quick parse", baseCommand);
     const preview = await request("/ai/parse", {
       method: "POST",
       body: {
         text,
-        baseCommand,
-        allowIntentRefine: window.voxaCommandParser.shouldUseAiAssist(baseCommand),
+        baseCommand: isCompound ? undefined : baseCommand,
+        allowIntentRefine: isCompound
+          ? true
+          : typeof parser.shouldUseAiAssist === "function"
+            ? parser.shouldUseAiAssist(baseCommand)
+            : (baseCommand.confidence || 0) < 0.75,
       },
     });
     debugLog("voice preview", preview);
@@ -433,13 +463,39 @@ window.voxaApi = {
     const payload = await request("/ai/execute", {
       method: "POST",
       body: {
-        preview: command,
+        preview: command.previews ? undefined : command,
+        previews: command.previews || undefined,
       },
     });
     debugLog("voice execution", payload);
+    const primaryExecution = payload.execution || payload.executions?.[0] || null;
+    if (primaryExecution?.undoAvailable) {
+      setVoiceUndo({
+        message: primaryExecution.message,
+        createdAt: new Date().toISOString(),
+      });
+    } else {
+      clearVoiceUndo();
+    }
     dispatchDataUpdated("voice:execute");
     await this.getDashboardData();
-    return payload.execution;
+    return primaryExecution || { message: "Voice command executed." };
+  },
+  getVoiceUndo() {
+    return getVoiceUndo();
+  },
+  clearVoiceUndo() {
+    clearVoiceUndo();
+  },
+  async undoLastVoiceAction() {
+    const payload = await request("/ai/undo", {
+      method: "POST",
+      body: {},
+    });
+    clearVoiceUndo();
+    dispatchDataUpdated("voice:undo");
+    await this.getDashboardData();
+    return payload;
   },
   formatDateTime(date) {
     return formatDateTime(date);

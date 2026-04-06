@@ -31,6 +31,40 @@ const userSchema = new mongoose.Schema(
         default: null,
       },
     },
+    assistantMemory: {
+      lastCreated: {
+        entityType: { type: String, default: "" },
+        itemId: { type: mongoose.Schema.Types.ObjectId, default: null },
+        title: { type: String, default: "" },
+        updatedAt: { type: Date, default: null },
+      },
+      lastDeleted: {
+        entityType: { type: String, default: "" },
+        itemId: { type: mongoose.Schema.Types.ObjectId, default: null },
+        title: { type: String, default: "" },
+        snapshot: { type: mongoose.Schema.Types.Mixed, default: null },
+        updatedAt: { type: Date, default: null },
+      },
+      lastCompleted: {
+        entityType: { type: String, default: "" },
+        itemId: { type: mongoose.Schema.Types.ObjectId, default: null },
+        title: { type: String, default: "" },
+        updatedAt: { type: Date, default: null },
+      },
+      lastViewed: {
+        entityType: { type: String, default: "" },
+        itemId: { type: mongoose.Schema.Types.ObjectId, default: null },
+        title: { type: String, default: "" },
+        updatedAt: { type: Date, default: null },
+      },
+      lastUndo: {
+        actionType: { type: String, default: "" },
+        entityType: { type: String, default: "" },
+        itemId: { type: mongoose.Schema.Types.ObjectId, default: null },
+        snapshot: { type: mongoose.Schema.Types.Mixed, default: null },
+        updatedAt: { type: Date, default: null },
+      },
+    },
   },
   {
     timestamps: true,

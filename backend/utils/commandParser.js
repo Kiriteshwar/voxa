@@ -11,6 +11,7 @@ const ACTION_PATTERNS = [
   { action: "update", patterns: [/\bupdate\b/i, /\bchange\b/i, /\breschedule\b/i, /\bmove\b/i] },
   { action: "snooze", patterns: [/\bsnooze\b/i, /\bremind me later\b/i] },
   { action: "stop", patterns: [/\bstop\b/i, /\bdismiss\b/i] },
+  { action: "undo", patterns: [/\bundo\b/i, /\brestore\b/i, /\bdo it again\b/i] },
   { action: "create", patterns: [/\badd\b/i, /\bcreate\b/i, /\bstart\b/i, /\bbegin\b/i, /\bi want to\b/i, /\bnote that\b/i, /\bremind me\b/i] },
 ];
 
@@ -80,6 +81,10 @@ function detectEntity(normalizedText, action) {
 
   if (["complete", "skip"].includes(action)) {
     return "habit";
+  }
+
+  if (action === "undo") {
+    return "last";
   }
 
   return "habit";
@@ -261,6 +266,28 @@ function shouldUseAi(command) {
   return Boolean(process.env.GEMINI_API_KEY) && (command.confidence < 0.7 || wordCount >= 10);
 }
 
+function splitCompoundCommands(text = "") {
+  const raw = normalizeWhitespace(text);
+  if (!raw) {
+    return [];
+  }
+
+  const segments = raw
+    .split(/\s+(?:and then|then|and)\s+/i)
+    .map((part) => normalizeWhitespace(part))
+    .filter(Boolean);
+
+  if (segments.length <= 1) {
+    return [raw];
+  }
+
+  const actionLikeSegments = segments.filter((segment) =>
+    /\b(add|create|start|begin|delete|remove|cancel|complete|done|finished|mark|skip|stop|snooze|update|remind|note)\b/i.test(segment)
+  );
+
+  return actionLikeSegments.length >= 2 ? segments : [raw];
+}
+
 async function generateGeminiJson(prompt) {
   const client = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const modelCandidates = [
@@ -337,6 +364,7 @@ async function parseCommand(text) {
 module.exports = {
   fallbackParse,
   parseCommand,
+  splitCompoundCommands,
   refineCommandWithGemini,
   removeDateAndTimeFragments,
   extractTarget,

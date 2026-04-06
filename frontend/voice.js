@@ -26,9 +26,7 @@
   const voiceFeedback = document.getElementById("voiceFeedback");
   const voiceResult = document.getElementById("voiceResult");
   const spokenResult = document.getElementById("spokenResult");
-  const parsedSummary = document.getElementById("parsedSummary");
-  const parsedConfidence = document.getElementById("parsedConfidence");
-  const matchedSuggestion = document.getElementById("matchedSuggestion");
+  const previewCards = document.getElementById("previewCards");
   const confirmButton = document.getElementById("confirmVoiceButton");
   const editButton = document.getElementById("editVoiceButton");
   const cancelButton = document.getElementById("cancelVoiceButton");
@@ -43,7 +41,7 @@
   let isParsing = false;
   let finalTranscript = "";
   let interimTranscript = "";
-  let parsedPreview = null;
+  let parsedPreviews = [];
 
   function sanitizeTranscript(text) {
     return (text || "").replace(/\s+/g, " ").trim();
@@ -52,10 +50,8 @@
   function resetResult() {
     voiceResult.classList.add("hidden");
     spokenResult.textContent = "";
-    parsedSummary.textContent = "";
-    parsedConfidence.textContent = "";
-    matchedSuggestion.textContent = "";
-    parsedPreview = null;
+    previewCards.innerHTML = "";
+    parsedPreviews = [];
   }
 
   function setVoiceTone(tone) {
@@ -209,6 +205,137 @@
     return recognition;
   }
 
+  function getConfidenceTone(confidence) {
+    if (confidence >= 0.9) {
+      return "high";
+    }
+    if (confidence >= 0.7) {
+      return "medium";
+    }
+    return "low";
+  }
+
+  function getConfidenceMessage(confidence) {
+    if (confidence >= 0.9) {
+      return "High confidence";
+    }
+    if (confidence >= 0.7) {
+      return "Some uncertainty";
+    }
+    return "Needs review";
+  }
+
+  function normalizePreviewCollection(previewResponse) {
+    if (Array.isArray(previewResponse?.previews)) {
+      return previewResponse.previews;
+    }
+    return previewResponse ? [previewResponse] : [];
+  }
+
+  function clonePreviews(previews) {
+    return JSON.parse(JSON.stringify(previews));
+  }
+
+  function rerenderPreviewCards() {
+    previewCards.innerHTML = parsedPreviews
+      .map((preview, index) => {
+        const previewUi = window.voxaCommandParser.formatPreview(preview);
+        const confidencePercent = Math.round((previewUi.confidence || 0) * 100);
+        const tone = getConfidenceTone(previewUi.confidence || 0);
+        const suggestionText =
+          previewUi.suggestion || previewUi.message || "Review this before you confirm.";
+
+        return `
+          <article class="voice-preview-card voice-preview-card--${tone}" data-preview-index="${index}">
+            <div class="voice-preview-head">
+              <div>
+                <p class="result-label">I understood</p>
+                <p class="result-text">${previewUi.headline}</p>
+              </div>
+              <div class="confidence-chip confidence-chip--${tone}">
+                ${getConfidenceMessage(previewUi.confidence || 0)}
+              </div>
+            </div>
+            <div class="confidence-meter">
+              <span class="confidence-meter__bar confidence-meter__bar--${tone}" style="width:${confidencePercent}%"></span>
+            </div>
+            <p class="support-text">${suggestionText}</p>
+            <div class="voice-preview-grid">
+              <label class="field">
+                <span>Title</span>
+                <input type="text" data-field="target" value="${preview.command.target || preview.command.content || ""}" />
+              </label>
+              <label class="field">
+                <span>Date</span>
+                <input type="date" data-field="date" value="${preview.command.date || ""}" />
+              </label>
+              <label class="field">
+                <span>Time</span>
+                <input type="time" data-field="time" value="${preview.command.time || ""}" />
+              </label>
+            </div>
+            <p class="result-text">${[
+              `Action: ${previewUi.actionLabel}`,
+              `Entity: ${previewUi.entityLabel}`,
+              ...previewUi.details.map((detail) => `${detail.label}: ${detail.value}`),
+              previewUi.confidenceLabel,
+            ].join("\n")}</p>
+          </article>
+        `;
+      })
+      .join("");
+  }
+
+  function updatePreviewFromEdit(index, field, value) {
+    const preview = parsedPreviews[index];
+    if (!preview) {
+      return;
+    }
+
+    const nextValue = sanitizeTranscript(value);
+    if (field === "target") {
+      preview.command.target = nextValue;
+      preview.command.content = nextValue;
+      if (preview.matchedItem && preview.matchedItem.title !== nextValue) {
+        preview.matchedItem = null;
+        preview.fuzzyMatched = false;
+      }
+    } else {
+      preview.command[field] = nextValue;
+    }
+
+    const baseConfidence = Number(preview.command.confidence || preview.confidence || 0.6);
+    preview.confidence = field === "target" ? Math.max(0.62, baseConfidence - 0.05) : Math.max(0.7, baseConfidence);
+    preview.needsConfirmation = true;
+    preview.suggestion = "Edited locally. Confirm this version when it looks right.";
+    preview.understood = {
+      ...(preview.understood || {}),
+      targetLabel: preview.command.target || preview.command.content || "",
+      details: [
+        ...(preview.command.date ? [{ label: "Date", value: preview.command.date }] : []),
+        ...(preview.command.time ? [{ label: "Time", value: preview.command.time }] : []),
+        ...(preview.command.repeat && preview.command.repeat !== "none"
+          ? [{ label: "Repeat", value: preview.command.repeat }]
+          : []),
+      ],
+      headline:
+        preview.command.action === "create"
+          ? `Got it. I’ll work with "${preview.command.target || preview.command.content || "this item"}".`
+          : `I think you want to ${preview.command.action} "${preview.command.target || preview.command.content || "this item"}".`,
+    };
+
+    rerenderPreviewCards();
+
+    window.requestAnimationFrame(() => {
+      const card = previewCards.querySelector(`[data-preview-index="${index}"]`);
+      const input = card?.querySelector(`input[data-field="${field}"]`);
+      if (input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    });
+  }
+
   function startVoice() {
     const instance = ensureRecognition();
     if (!instance) {
@@ -253,8 +380,9 @@
     voiceFeedback.textContent = "Understanding what you said...";
 
     try {
-      parsedPreview = await window.voxaApi.parseVoiceCommand(transcript);
-      console.debug("[Voice] parsed preview", parsedPreview);
+      const previewResponse = await window.voxaApi.parseVoiceCommand(transcript);
+      parsedPreviews = clonePreviews(normalizePreviewCollection(previewResponse));
+      console.debug("[Voice] parsed preview", parsedPreviews);
     } catch (error) {
       isParsing = false;
       voiceFeedback.textContent = error.message || "Could not understand that request.";
@@ -262,29 +390,16 @@
       return;
     }
 
-    const previewUi = window.voxaCommandParser.formatPreview(parsedPreview);
     isParsing = false;
     spokenResult.textContent = transcript;
-    parsedSummary.textContent = previewUi.headline;
-    parsedConfidence.textContent = [
-      `Action: ${previewUi.actionLabel}`,
-      `Entity: ${previewUi.entityLabel}`,
-      previewUi.targetLabel ? `Target: ${previewUi.targetLabel}` : "",
-      ...previewUi.details.map((detail) => `${detail.label}: ${detail.value}`),
-      previewUi.confidenceLabel,
-    ]
-      .filter(Boolean)
-      .join("\n");
-    matchedSuggestion.textContent =
-      previewUi.suggestion ||
-      (parsedPreview.needsConfirmation
-        ? "Please review before you confirm."
-        : "Looks good. Confirm when you are ready.");
-
+    rerenderPreviewCards();
     voiceResult.classList.remove("hidden");
-    voiceFeedback.textContent = parsedPreview.needsConfirmation
-      ? "Please confirm the suggestion before VoxaHabit makes any change."
-      : "Review and confirm when you are ready.";
+    voiceFeedback.textContent =
+      parsedPreviews.length > 1
+        ? "I found multiple actions. Please review each card before you confirm."
+        : parsedPreviews[0]?.needsConfirmation
+          ? "Please review the suggestion before VoxaHabit makes any change."
+          : "Review and confirm when you are ready.";
     setInteractionState("ready");
   }
 
@@ -302,18 +417,20 @@
   }
 
   async function confirmVoice() {
-    if (!parsedPreview) {
+    if (!parsedPreviews.length) {
       return;
     }
 
     try {
       isParsing = true;
       setInteractionState("processing");
-      voiceFeedback.textContent = parsedPreview.needsConfirmation
+      voiceFeedback.textContent = parsedPreviews.some((preview) => preview.needsConfirmation)
         ? "Applying the confirmed action..."
         : "Executing your request...";
 
-      const result = await window.voxaApi.executeVoiceCommand(parsedPreview);
+      const result = await window.voxaApi.executeVoiceCommand(
+        parsedPreviews.length > 1 ? { previews: parsedPreviews } : parsedPreviews[0]
+      );
       console.debug("[Voice] execution result", result);
       isParsing = false;
       voiceState.textContent = "Completed";
@@ -330,12 +447,11 @@
   }
 
   function editVoice() {
-    finalTranscript = "";
-    interimTranscript = "";
-    liveText.textContent = spokenResult.textContent || "Your speech will appear here in real time.";
-    voiceFeedback.textContent = "Say it again with a small correction, then confirm the new suggestion.";
-    resetResult();
-    setInteractionState("idle");
+    if (!parsedPreviews.length) {
+      return;
+    }
+    voiceFeedback.textContent = "Edit the fields directly in the card, then confirm the updated version.";
+    setInteractionState("ready");
   }
 
   function cancelVoice() {
@@ -354,6 +470,15 @@
   confirmButton.addEventListener("click", confirmVoice);
   editButton.addEventListener("click", editVoice);
   cancelButton.addEventListener("click", cancelVoice);
+  previewCards.addEventListener("input", (event) => {
+    const input = event.target.closest("input[data-field]");
+    const card = event.target.closest("[data-preview-index]");
+    if (!input || !card) {
+      return;
+    }
+
+    updatePreviewFromEdit(Number(card.dataset.previewIndex), input.dataset.field, input.value);
+  });
 
   ensureRecognition();
   setInteractionState("idle");

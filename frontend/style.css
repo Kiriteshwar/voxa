@@ -557,8 +557,132 @@ textarea {
   color: var(--danger);
 }
 
+.preview-stack {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.voice-preview-card {
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(22, 50, 79, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+  animation: fade-up 220ms ease;
+}
+
+.voice-preview-card--high {
+  border-color: rgba(45, 149, 96, 0.24);
+}
+
+.voice-preview-card--medium {
+  border-color: rgba(198, 146, 30, 0.28);
+}
+
+.voice-preview-card--low {
+  border-color: rgba(207, 78, 78, 0.26);
+}
+
+.voice-preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.voice-preview-grid {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 10px;
+}
+
+.confidence-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.confidence-chip--high {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.confidence-chip--medium {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.confidence-chip--low {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.confidence-meter {
+  margin-top: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(22, 50, 79, 0.08);
+  overflow: hidden;
+}
+
+.confidence-meter__bar {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width 0.2s ease;
+}
+
+.confidence-meter__bar--high {
+  background: linear-gradient(90deg, #39b574 0%, #2d9560 100%);
+}
+
+.confidence-meter__bar--medium {
+  background: linear-gradient(90deg, #e0b14b 0%, #c6921e 100%);
+}
+
+.confidence-meter__bar--low {
+  background: linear-gradient(90deg, #eb7a7a 0%, #cf4e4e 100%);
+}
+
+.undo-snackbar {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(22, 50, 79, 0.94);
+  color: #fff;
+  box-shadow: 0 18px 32px rgba(22, 50, 79, 0.22);
+  z-index: 12;
+}
+
+.undo-snackbar button {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  padding: 10px 14px;
+}
+
 .hidden {
   display: none !important;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes pulse {
@@ -592,6 +716,10 @@ textarea {
 
   .tab-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .voice-preview-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 

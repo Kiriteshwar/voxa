@@ -115,6 +115,9 @@
     const analyticsGrid = document.getElementById("analyticsGrid");
     const upcomingList = document.getElementById("upcomingList");
     const historyList = document.getElementById("historyList");
+    const undoSnackbar = document.getElementById("undoSnackbar");
+    const undoMessage = document.getElementById("undoMessage");
+    const undoButton = document.getElementById("undoButton");
 
     const habitForm = document.getElementById("habitForm");
     const noteForm = document.getElementById("noteForm");
@@ -142,6 +145,17 @@
     function resetReminderForm() {
       reminderForm.reset();
       document.getElementById("reminderId").value = "";
+    }
+
+    async function showUndoSnackbarIfNeeded() {
+      const undoPayload = window.voxaApi.getVoiceUndo();
+      if (!undoPayload) {
+        undoSnackbar.classList.add("hidden");
+        return;
+      }
+
+      undoMessage.textContent = `${undoPayload.message} Undo?`;
+      undoSnackbar.classList.remove("hidden");
     }
 
     function buildUpcomingItems(habits, reminders, schedules) {
@@ -320,6 +334,8 @@
         activity: data.activity.length,
         history: data.history.length,
       });
+
+      await showUndoSnackbarIfNeeded();
     }
 
     tabButtons.forEach((button) => {
@@ -327,8 +343,22 @@
     });
 
     logoutButton.addEventListener("click", () => {
+      window.voxaApi.clearVoiceUndo();
       window.voxaApi.logout();
       redirectTo("/pages/login.html");
+    });
+
+    undoButton.addEventListener("click", async () => {
+      try {
+        const result = await window.voxaApi.undoLastVoiceAction();
+        undoMessage.textContent = result.message;
+        setTimeout(() => {
+          undoSnackbar.classList.add("hidden");
+        }, 1200);
+        await renderApp();
+      } catch (error) {
+        undoMessage.textContent = error.message;
+      }
     });
 
     notificationButton.addEventListener("click", async () => {

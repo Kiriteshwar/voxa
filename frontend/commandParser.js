@@ -51,6 +51,9 @@
     if (/\b(update|change|move|reschedule)\b/i.test(normalizedText)) {
       return "update";
     }
+    if (/\b(undo|restore|do it again)\b/i.test(normalizedText)) {
+      return "undo";
+    }
     if (/\bsnooze\b/i.test(normalizedText)) {
       return "snooze";
     }
@@ -69,6 +72,9 @@
     }
     if (/\b(remind|reminder|alert|notify)\b/i.test(normalizedText)) {
       return "reminder";
+    }
+    if (action === "undo") {
+      return "last";
     }
     return "habit";
   }
@@ -212,6 +218,8 @@
 
   function formatPreview(preview) {
     const understood = preview.understood || {};
+    const confidence = preview.confidence || preview.command?.confidence || 0;
+
     return {
       headline: understood.headline || `${preview.command.action} ${preview.command.entityType}`,
       actionLabel: understood.actionLabel || preview.command.action,
@@ -219,12 +227,21 @@
       targetLabel: understood.targetLabel || preview.command.target || preview.command.content || "",
       details: understood.details || [],
       suggestion: understood.suggestion || "",
-      confidenceLabel: `${Math.round((preview.confidence || preview.command.confidence || 0) * 100)}% confidence`,
+      confidence,
+      confidenceLabel: `${Math.round(confidence * 100)}% confidence`,
+      confidenceTone: confidence >= 0.9 ? "high" : confidence >= 0.7 ? "medium" : "low",
+      message:
+        confidence < 0.7
+          ? "I'm not fully sure yet. Please review this."
+          : confidence < 0.9
+            ? "This looks close, but I want you to confirm it."
+            : "This looks good to me.",
     };
   }
 
   window.voxaCommandParser = {
     quickParse,
+    parse: quickParse,
     removeDateAndTimeFragments,
     shouldUseAiAssist,
     formatPreview,

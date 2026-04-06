@@ -1,5 +1,5 @@
-const { parseCommand, refineCommandWithGemini } = require("../utils/commandParser");
-const { executePreview, previewCommand } = require("../services/commandService");
+const { parseCommand, refineCommandWithGemini, splitCompoundCommands } = require("../utils/commandParser");
+const { executePreview, previewCommand, undoLastAction } = require("../services/commandService");
 
 exports.parseVoiceCommand = async (req, res, next) => {
   try {
@@ -23,21 +23,33 @@ exports.parseVoiceCommand = async (req, res, next) => {
         }
       }
 
-      const preview = await previewCommand(
-        req.user.id,
-        {
-          ...baseCommand,
-          ...refined,
-          confidence: Number(refined.confidence || baseCommand.confidence || 0.6),
-        },
-        source,
-      );
+      const command = {
+        ...baseCommand,
+        ...refined,
+        confidence: Number(refined.confidence || baseCommand.confidence || 0.6),
+      };
 
+      const preview = await previewCommand(req.user.id, command, source);
       return res.json(preview);
     }
 
-    const parsed = await parseCommand(text);
-    return res.json(await previewCommand(req.user.id, parsed.command, parsed.source));
+    const segments = splitCompoundCommands(text);
+    const parsedResults = await Promise.all(segments.map((segment) => parseCommand(segment)));
+    const previews = await Promise.all(
+      parsedResults.map((parsed) => previewCommand(req.user.id, parsed.command, parsed.source))
+    );
+
+    if (previews.length > 1) {
+      return res.json({
+        multiIntent: true,
+        previews,
+        confidence: Number(
+          (previews.reduce((sum, preview) => sum + (preview.confidence || 0), 0) / previews.length).toFixed(2)
+        ),
+      });
+    }
+
+    return res.json(previews[0]);
   } catch (error) {
     return next(error);
   }
@@ -45,27 +57,43 @@ exports.parseVoiceCommand = async (req, res, next) => {
 
 exports.executeVoiceCommand = async (req, res, next) => {
   try {
-    const { text, command, preview } = req.body;
+    const { text, command, preview, previews } = req.body;
 
-    if (!text && !command && !preview) {
-      return res.status(400).json({ message: "Text, command, or preview is required" });
+    if (!text && !command && !preview && !previews) {
+      return res.status(400).json({ message: "Text, command, preview, or previews are required" });
     }
 
-    let parsedPreview = preview;
+    let previewList = previews || (preview ? [preview] : []);
 
-    if (!parsedPreview) {
-      const parsedResult = command ? { source: "client", command } : await parseCommand(text);
-      parsedPreview = await previewCommand(req.user.id, parsedResult.command, parsedResult.source);
+    if (!previewList.length) {
+      const parsedSegments = text ? splitCompoundCommands(text) : [""];
+      const parsedResults = command
+        ? [{ source: "client", command }]
+        : await Promise.all(parsedSegments.map((segment) => parseCommand(segment)));
+      previewList = await Promise.all(
+        parsedResults.map((parsed) => previewCommand(req.user.id, parsed.command, parsed.source))
+      );
     }
 
-    const execution = await executePreview(req.user.id, parsedPreview, "voice");
+    const executions = [];
+    for (const currentPreview of previewList) {
+      executions.push(await executePreview(req.user.id, currentPreview, "voice"));
+    }
 
     return res.json({
-      source: parsedPreview.source,
-      command: parsedPreview.command,
-      matchedItem: parsedPreview.matchedItem || null,
-      execution,
+      multiIntent: executions.length > 1,
+      executions,
+      execution: executions[0],
     });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.undoVoiceAction = async (req, res, next) => {
+  try {
+    const result = await undoLastAction(req.user.id);
+    return res.json(result);
   } catch (error) {
     return next(error);
   }
