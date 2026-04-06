@@ -64,7 +64,7 @@ async function startServer() {
     await mongoose.connect(process.env.MONGODB_URI);
     console.log("MongoDB connected");
     app.listen(port, () => {
-      console.log(`VoxaHabit server running on http://localhost:${port}`);
+      console.log(`VoxaHabit server running on port ${clientOrigin}`);
     });
   } catch (error) {
     console.error("Failed to start server", error.message);
