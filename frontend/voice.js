@@ -4,8 +4,6 @@
     return;
   }
 
-  const recognitionApi = window.SpeechRecognition || window.webkitSpeechRecognition;
-
   if (!window.voxaApi.isAuthenticated()) {
     window.location.replace("/pages/login.html");
     return;
@@ -18,6 +16,9 @@
   }
 
   document.getElementById("voiceUserEmail").textContent = window.voxaApi.getCurrentUser()?.email || "";
+
+  const TARGET_SAMPLE_RATE = 16000;
+  const SEND_CHUNK_SAMPLES = 3200;
 
   const startButton = document.getElementById("startVoiceButton");
   const stopButton = document.getElementById("stopVoiceButton");
@@ -32,21 +33,27 @@
   const cancelButton = document.getElementById("cancelVoiceButton");
   const micOrb = document.getElementById("micOrb");
 
-  let recognition = null;
-  let activeSessionId = 0;
-  let shouldAutoRestart = false;
-  let manualStop = false;
-  let recognitionRunning = false;
+  let audioStream = null;
+  let audioContext = null;
+  let sourceNode = null;
+  let processorNode = null;
+  let sessionId = "";
+  let sessionClosed = false;
+  let eventSource = null;
   let isListening = false;
   let isParsing = false;
   let finalTranscript = "";
   let interimTranscript = "";
-  let finalTranscriptChunks = new Map();
-  let interimTranscriptChunks = new Map();
+  let rawFinalTranscript = "";
+  let rawInterimTranscript = "";
   let parsedPreviews = [];
+  let queuedPcmChunks = [];
+  let queuedPcmSamples = 0;
+  let audioSendChain = Promise.resolve();
+  let lastRenderedLiveText = "";
 
   function normalizeWhitespace(text = "") {
-    return text.replace(/\s+/g, " ").trim();
+    return String(text || "").replace(/\s+/g, " ").trim();
   }
 
   function splitWords(text = "") {
@@ -58,9 +65,9 @@
     const compact = [];
 
     for (const word of words) {
-      const normalizedWord = word.toLowerCase();
-      const previousWord = compact[compact.length - 1]?.toLowerCase();
-      if (normalizedWord && normalizedWord === previousWord) {
+      const current = word.toLowerCase();
+      const previous = compact[compact.length - 1]?.toLowerCase();
+      if (current && current === previous) {
         continue;
       }
       compact.push(word);
@@ -77,8 +84,8 @@
 
     for (let phraseSize = Math.min(5, Math.floor(words.length / 2)); phraseSize >= 2; phraseSize -= 1) {
       const tail = words.slice(-phraseSize).join(" ").toLowerCase();
-      const beforeTail = words.slice(-phraseSize * 2, -phraseSize).join(" ").toLowerCase();
-      if (tail && tail === beforeTail) {
+      const previous = words.slice(-phraseSize * 2, -phraseSize).join(" ").toLowerCase();
+      if (tail && tail === previous) {
         return words.slice(0, -phraseSize).join(" ");
       }
     }
@@ -86,29 +93,27 @@
     return words.join(" ");
   }
 
-  function sanitizeTranscript(text) {
-    return normalizeWhitespace(collapseRepeatedTailPhrases(collapseConsecutiveWordRepeats(text || "")));
+  function sanitizeTranscript(text = "") {
+    return normalizeWhitespace(collapseRepeatedTailPhrases(collapseConsecutiveWordRepeats(text)));
   }
 
   function resetTranscriptState() {
     finalTranscript = "";
     interimTranscript = "";
-    finalTranscriptChunks = new Map();
-    interimTranscriptChunks = new Map();
-  }
-
-  function buildTranscriptFromChunks(map) {
-    return sanitizeTranscript(
-      [...map.entries()]
-        .sort((left, right) => left[0] - right[0])
-        .map(([, value]) => value)
-        .join(" ")
-    );
+    rawFinalTranscript = "";
+    rawInterimTranscript = "";
+    queuedPcmChunks = [];
+    queuedPcmSamples = 0;
+    audioSendChain = Promise.resolve();
+    lastRenderedLiveText = "";
   }
 
   function renderLiveTranscript() {
-    const combinedText = sanitizeTranscript([finalTranscript, interimTranscript].filter(Boolean).join(" "));
-    liveText.textContent = combinedText || "Listening...";
+    const combinedText = sanitizeTranscript([finalTranscript, interimTranscript].filter(Boolean).join(" ")) || "Listening...";
+    if (combinedText !== lastRenderedLiveText) {
+      liveText.textContent = combinedText;
+      lastRenderedLiveText = combinedText;
+    }
   }
 
   function resetResult() {
@@ -180,98 +185,6 @@
     cancelButton.disabled = isParsing;
   }
 
-  function ensureRecognition() {
-    if (!recognitionApi || recognition) {
-      return recognition;
-    }
-
-    recognition = new recognitionApi();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-IN";
-
-    recognition.onstart = () => {
-      recognitionRunning = true;
-      console.debug("[Voice] recognition started", { sessionId: activeSessionId });
-      voiceFeedback.textContent = "Listening now. Speak naturally.";
-    };
-
-    recognition.onresult = (event) => {
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const text = sanitizeTranscript(event.results[index][0]?.transcript || "");
-        if (!text) {
-          continue;
-        }
-
-        if (event.results[index].isFinal) {
-          finalTranscriptChunks.set(index, text);
-          interimTranscriptChunks.delete(index);
-        } else {
-          interimTranscriptChunks.set(index, text);
-        }
-      }
-
-      finalTranscript = buildTranscriptFromChunks(finalTranscriptChunks);
-      interimTranscript = buildTranscriptFromChunks(interimTranscriptChunks);
-      renderLiveTranscript();
-
-      console.debug("[Voice] transcript", {
-        sessionId: activeSessionId,
-        resultIndex: event.resultIndex,
-        finalTranscript,
-        interimTranscript,
-      });
-    };
-
-    recognition.onerror = (event) => {
-      const errorMessages = {
-        "audio-capture": "No microphone was found. Please check your mic.",
-        "not-allowed": "Microphone access was denied. Please allow mic permission and try again.",
-        "no-speech": "I did not hear anything yet. Keep speaking or try again.",
-        aborted: "Voice capture was interrupted. Try again.",
-      };
-
-      recognitionRunning = false;
-      shouldAutoRestart = false;
-      manualStop = false;
-      voiceFeedback.textContent = errorMessages[event.error] || `Voice error: ${event.error}`;
-      setInteractionState("error");
-    };
-
-    recognition.onend = () => {
-      recognitionRunning = false;
-      console.debug("[Voice] recognition ended", {
-        sessionId: activeSessionId,
-        manualStop,
-        shouldAutoRestart,
-      });
-
-      if (manualStop) {
-        manualStop = false;
-        handleStop();
-        return;
-      }
-
-      if (shouldAutoRestart) {
-        interimTranscript = "";
-        interimTranscriptChunks = new Map();
-        renderLiveTranscript();
-        window.setTimeout(() => {
-          if (!recognitionRunning && shouldAutoRestart) {
-            try {
-              recognition.start();
-            } catch (_error) {
-              voiceFeedback.textContent = "Listening paused. Tap Start Voice to continue.";
-              setInteractionState("error");
-            }
-          }
-        }, 120);
-      }
-    };
-
-    return recognition;
-  }
-
   function getConfidenceTone(confidence) {
     if (confidence >= 0.9) {
       return "high";
@@ -309,8 +222,7 @@
         const previewUi = window.voxaCommandParser.formatPreview(preview);
         const confidencePercent = Math.round((previewUi.confidence || 0) * 100);
         const tone = getConfidenceTone(previewUi.confidence || 0);
-        const suggestionText =
-          previewUi.suggestion || previewUi.message || "Review this before you confirm.";
+        const suggestionText = previewUi.suggestion || previewUi.message || "Review this before you confirm.";
 
         return `
           <article class="voice-preview-card voice-preview-card--${tone}" data-preview-index="${index}">
@@ -381,9 +293,7 @@
       details: [
         ...(preview.command.date ? [{ label: "Date", value: preview.command.date }] : []),
         ...(preview.command.time ? [{ label: "Time", value: preview.command.time }] : []),
-        ...(preview.command.repeat && preview.command.repeat !== "none"
-          ? [{ label: "Repeat", value: preview.command.repeat }]
-          : []),
+        ...(preview.command.repeat && preview.command.repeat !== "none" ? [{ label: "Repeat", value: preview.command.repeat }] : []),
       ],
       headline:
         preview.command.action === "create"
@@ -403,36 +313,232 @@
     });
   }
 
-  function startVoice() {
-    const instance = ensureRecognition();
-    if (!instance) {
-      voiceFeedback.textContent = "This browser does not support the Web Speech API.";
+  function downsampleTo16k(inputData, inputSampleRate) {
+    if (!inputData?.length) {
+      return new Int16Array(0);
+    }
+
+    if (inputSampleRate === TARGET_SAMPLE_RATE) {
+      const output = new Int16Array(inputData.length);
+      for (let index = 0; index < inputData.length; index += 1) {
+        const sample = Math.max(-1, Math.min(1, inputData[index]));
+        output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      }
+      return output;
+    }
+
+    const sampleRateRatio = inputSampleRate / TARGET_SAMPLE_RATE;
+    const outputLength = Math.round(inputData.length / sampleRateRatio);
+    const output = new Int16Array(outputLength);
+    let offsetResult = 0;
+    let offsetBuffer = 0;
+
+    while (offsetResult < outputLength) {
+      const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+      let accumulator = 0;
+      let count = 0;
+      for (let index = offsetBuffer; index < Math.min(nextOffsetBuffer, inputData.length); index += 1) {
+        accumulator += inputData[index];
+        count += 1;
+      }
+      const sample = count ? accumulator / count : 0;
+      const normalizedSample = Math.max(-1, Math.min(1, sample));
+      output[offsetResult] = normalizedSample < 0 ? normalizedSample * 0x8000 : normalizedSample * 0x7fff;
+      offsetResult += 1;
+      offsetBuffer = nextOffsetBuffer;
+    }
+
+    return output;
+  }
+
+  function enqueuePcmChunk(pcmChunk) {
+    if (!pcmChunk?.length) {
+      return;
+    }
+
+    queuedPcmChunks.push(pcmChunk);
+    queuedPcmSamples += pcmChunk.length;
+    flushQueuedPcm();
+  }
+
+  function takeQueuedPcm(sampleCount) {
+    const target = new Int16Array(sampleCount);
+    let offset = 0;
+
+    while (offset < sampleCount && queuedPcmChunks.length) {
+      const current = queuedPcmChunks[0];
+      const copyLength = Math.min(current.length, sampleCount - offset);
+      target.set(current.subarray(0, copyLength), offset);
+      offset += copyLength;
+
+      if (copyLength === current.length) {
+        queuedPcmChunks.shift();
+      } else {
+        queuedPcmChunks[0] = current.subarray(copyLength);
+      }
+    }
+
+    queuedPcmSamples -= sampleCount;
+    return target;
+  }
+
+  function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunkSize = 0x8000;
+
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      const chunk = bytes.subarray(index, index + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+
+    return window.btoa(binary);
+  }
+
+  function queueAudioUpload(pcmChunk) {
+    if (!sessionId || sessionClosed || !pcmChunk?.length) {
+      return;
+    }
+
+    const base64Audio = arrayBufferToBase64(pcmChunk.buffer.slice(0));
+    audioSendChain = audioSendChain
+      .then(() => window.voxaApi.sendVoiceAudioChunk(sessionId, base64Audio))
+      .catch((error) => {
+        console.debug("[AssemblyAI] audio upload error", error);
+        voiceFeedback.textContent = error.message || "Audio streaming was interrupted.";
+        setInteractionState("error");
+      });
+  }
+
+  function flushQueuedPcm(force = false) {
+    const requiredSamples = force ? queuedPcmSamples : Math.max(SEND_CHUNK_SAMPLES, 1);
+
+    while (queuedPcmSamples >= requiredSamples && queuedPcmSamples > 0) {
+      const sampleCount = force ? queuedPcmSamples : SEND_CHUNK_SAMPLES;
+      const chunk = takeQueuedPcm(sampleCount);
+      queueAudioUpload(chunk);
+      if (force) {
+        break;
+      }
+    }
+  }
+
+  async function setupAudioCapture() {
+    audioStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
+    }
+
+    sourceNode = audioContext.createMediaStreamSource(audioStream);
+    processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+
+    processorNode.onaudioprocess = (event) => {
+      if (!isListening || sessionClosed) {
+        return;
+      }
+
+      const channelData = event.inputBuffer.getChannelData(0);
+      const downsampled = downsampleTo16k(channelData, audioContext.sampleRate);
+      enqueuePcmChunk(downsampled);
+    };
+
+    sourceNode.connect(processorNode);
+    processorNode.connect(audioContext.destination);
+  }
+
+  function teardownAudioCapture() {
+    try {
+      processorNode?.disconnect();
+    } catch (_error) {}
+    try {
+      sourceNode?.disconnect();
+    } catch (_error) {}
+    try {
+      audioStream?.getTracks().forEach((track) => track.stop());
+    } catch (_error) {}
+    try {
+      audioContext?.close();
+    } catch (_error) {}
+
+    processorNode = null;
+    sourceNode = null;
+    audioStream = null;
+    audioContext = null;
+  }
+
+  function connectTranscriptEvents(currentSessionId) {
+    eventSource = window.voxaApi.createVoiceEventsStream(currentSessionId, {
+      onTranscript(payload) {
+        rawFinalTranscript = payload.finalTranscript || rawFinalTranscript;
+        rawInterimTranscript = payload.interimTranscript || "";
+        finalTranscript = sanitizeTranscript(payload.finalTranscript || finalTranscript);
+        interimTranscript = sanitizeTranscript(payload.interimTranscript || "");
+        renderLiveTranscript();
+        console.debug("[AssemblyAI] transcript", payload);
+      },
+      onError(payload) {
+        console.debug("[AssemblyAI] stream error", payload);
+        if (isListening || isParsing) {
+          voiceFeedback.textContent = payload.message || "Voice streaming was interrupted.";
+          setInteractionState("error");
+        }
+      },
+      onEvent(eventName, payload) {
+        console.debug("[AssemblyAI] event", eventName, payload);
+      },
+    });
+  }
+
+  async function startVoice() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      voiceFeedback.textContent = "This browser does not support live microphone capture.";
       setInteractionState("error");
       return;
     }
 
-    activeSessionId += 1;
-    resetTranscriptState();
-    shouldAutoRestart = true;
-    manualStop = false;
-    resetResult();
-    liveText.textContent = "Listening...";
-    voiceFeedback.textContent = "Listening now. Speak naturally in one sentence or a few short phrases.";
-    setInteractionState("listening");
-
     try {
-      if (recognitionRunning) {
-        recognition.abort();
-      }
-      recognition.start();
-    } catch (_error) {
-      voiceFeedback.textContent = "Voice recognition is already active. Try again in a moment.";
+      resetTranscriptState();
+      resetResult();
+      sessionClosed = false;
+      liveText.textContent = "Connecting to AssemblyAI...";
+      voiceFeedback.textContent = "Preparing your microphone and live transcription...";
+      setInteractionState("processing");
+
+      const session = await window.voxaApi.startVoiceStream();
+      sessionId = session.sessionId;
+      connectTranscriptEvents(sessionId);
+      await setupAudioCapture();
+
+      voiceFeedback.textContent = "Listening now. Speak naturally and stop when you're ready.";
+      setInteractionState("listening");
+      renderLiveTranscript();
+    } catch (error) {
+      console.debug("[AssemblyAI] start error", error);
+      teardownAudioCapture();
+      eventSource?.close();
+      eventSource = null;
+      sessionId = "";
+      voiceFeedback.textContent = error.message || "Could not start voice streaming.";
+      setInteractionState("error");
     }
   }
 
-  async function handleStop() {
-    const transcript = sanitizeTranscript(finalTranscript || interimTranscript || liveText.textContent);
-    console.debug("[Voice] final transcript", { transcript, finalTranscript, interimTranscript });
+  async function handleStop(finalizedTranscript = "") {
+    const transcript = sanitizeTranscript(finalizedTranscript || rawFinalTranscript || rawInterimTranscript || finalTranscript || interimTranscript);
+    console.debug("[AssemblyAI] final transcript", {
+      transcript,
+      rawFinalTranscript,
+      rawInterimTranscript,
+    });
 
     if (!transcript || transcript === "Listening...") {
       liveText.textContent = "No speech captured. Try again.";
@@ -469,17 +575,35 @@
     setInteractionState("ready");
   }
 
-  function stopVoice() {
-    const instance = ensureRecognition();
-    if (!instance || !isListening) {
+  async function stopVoice() {
+    if (!isListening && !sessionId) {
       return;
     }
 
-    shouldAutoRestart = false;
-    manualStop = true;
     setInteractionState("processing");
-    voiceFeedback.textContent = "Wrapping up your transcript...";
-    instance.stop();
+    voiceFeedback.textContent = "Finalizing your transcript...";
+    isListening = false;
+    sessionClosed = true;
+
+    teardownAudioCapture();
+    flushQueuedPcm(true);
+
+    try {
+      await audioSendChain;
+      const payload = sessionId ? await window.voxaApi.stopVoiceStream(sessionId) : { finalTranscript: "" };
+      eventSource?.close();
+      eventSource = null;
+      const finalText = payload.finalTranscript || rawFinalTranscript || rawInterimTranscript;
+      sessionId = "";
+      await handleStop(finalText);
+    } catch (error) {
+      console.debug("[AssemblyAI] stop error", error);
+      eventSource?.close();
+      eventSource = null;
+      sessionId = "";
+      voiceFeedback.textContent = error.message || "Could not stop voice streaming cleanly.";
+      setInteractionState("error");
+    }
   }
 
   async function confirmVoice() {
@@ -494,9 +618,7 @@
         ? "Applying the confirmed action..."
         : "Executing your request...";
 
-      const result = await window.voxaApi.executeVoiceCommand(
-        parsedPreviews.length > 1 ? { previews: parsedPreviews } : parsedPreviews[0]
-      );
+      const result = await window.voxaApi.executeVoiceCommand(parsedPreviews.length > 1 ? { previews: parsedPreviews } : parsedPreviews[0]);
       console.debug("[Voice] execution result", result);
       isParsing = false;
       voiceState.textContent = "Completed";
@@ -521,8 +643,14 @@
   }
 
   function cancelVoice() {
-    shouldAutoRestart = false;
-    manualStop = false;
+    sessionClosed = true;
+    eventSource?.close();
+    eventSource = null;
+    if (sessionId) {
+      window.voxaApi.stopVoiceStream(sessionId).catch(() => {});
+      sessionId = "";
+    }
+    teardownAudioCapture();
     resetTranscriptState();
     liveText.textContent = "Your speech will appear here in real time.";
     voiceFeedback.textContent = "Nothing was changed. Start again whenever you are ready.";
@@ -545,6 +673,5 @@
     updatePreviewFromEdit(Number(card.dataset.previewIndex), input.dataset.field, input.value);
   });
 
-  ensureRecognition();
   setInteractionState("idle");
 })();

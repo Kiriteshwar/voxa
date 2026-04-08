@@ -22,6 +22,12 @@ function getApiBase() {
   return resolveApiBase();
 }
 
+function buildApiUrl(path = "") {
+  const base = resolveApiBase().replace(/\/+$/, "");
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${suffix}`;
+}
+
 function readJson(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -236,7 +242,7 @@ async function request(path, options = {}) {
 
   debugLog("request", { path, method: config.method, body: options.body });
 
-  const response = await fetch(`${resolveApiBase()}${path}`, config);
+  const response = await fetch(buildApiUrl(path), config);
   const text = await response.text();
   const contentType = response.headers.get("content-type") || "";
   const isJson = contentType.includes("application/json");
@@ -356,6 +362,64 @@ window.voxaApi = {
     });
     debugLog("voice preview", preview);
     return preview;
+  },
+  async startVoiceStream() {
+    return request("/voice/stream/start", {
+      method: "POST",
+      body: {},
+    });
+  },
+  createVoiceEventsStream(sessionId, handlers = {}) {
+    const token = this.getToken();
+    const streamUrl = `${buildApiUrl(`/voice/stream/${sessionId}/events`)}?token=${encodeURIComponent(token)}`;
+    const stream = new EventSource(streamUrl);
+
+    stream.addEventListener("session.connected", (event) => {
+      handlers.onEvent?.("session.connected", JSON.parse(event.data));
+    });
+
+    stream.addEventListener("session.ready", (event) => {
+      handlers.onEvent?.("session.ready", JSON.parse(event.data));
+    });
+
+    stream.addEventListener("session.begin", (event) => {
+      handlers.onEvent?.("session.begin", JSON.parse(event.data));
+    });
+
+    stream.addEventListener("transcript", (event) => {
+      handlers.onTranscript?.(JSON.parse(event.data));
+    });
+
+    stream.addEventListener("session.error", (event) => {
+      const payload = JSON.parse(event.data);
+      handlers.onError?.(payload);
+    });
+
+    stream.addEventListener("session.closed", (event) => {
+      handlers.onEvent?.("session.closed", JSON.parse(event.data));
+    });
+
+    stream.addEventListener("session.terminated", (event) => {
+      handlers.onEvent?.("session.terminated", JSON.parse(event.data));
+    });
+
+    stream.onerror = () => {
+      handlers.onError?.({ message: "Voice stream connection was interrupted." });
+    };
+
+    return stream;
+  },
+  async sendVoiceAudioChunk(sessionId, audioBase64) {
+    return request(`/voice/stream/${sessionId}/audio`, {
+      method: "POST",
+      body: { audio: audioBase64 },
+    });
+  },
+  async stopVoiceStream(sessionId) {
+    return request(`/voice/stream/${sessionId}/stop`, {
+      method: "POST",
+      body: {},
+    });
   },
   async getDashboardData() {
     const [userPayload, habitsPayload, notesPayload, remindersPayload, schedulesPayload, logsPayload, analyticsPayload, activityPayload, historyPayload] =

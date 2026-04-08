@@ -15,6 +15,7 @@ const scheduleRoutes = require("./routes/scheduleRoutes");
 const activityRoutes = require("./routes/activityRoutes");
 const historyRoutes = require("./routes/historyRoutes");
 const aiRoutes = require("./routes/aiRoutes");
+const voiceRoutes = require("./routes/voiceRoutes");
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -55,6 +56,7 @@ app.use("/api/schedule", scheduleRoutes);
 app.use("/api/activity", activityRoutes);
 app.use("/api/history", historyRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/voice/stream", voiceRoutes);
 
 app.get("*", (req, res, next) => {
   if (req.path.startsWith("/api")) {
