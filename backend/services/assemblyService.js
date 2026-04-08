@@ -124,6 +124,7 @@ function buildTranscriptPayload(session, meta = {}) {
 }
 
 function connectAssemblySocket(session, token) {
+  const url = new URL(ASSEMBLY_WS_BASE);
 
   url.searchParams.set("sample_rate", String(session.sampleRate));
   url.searchParams.set("encoding", "pcm_s16le");
