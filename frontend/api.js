@@ -15,34 +15,11 @@ function normalizeApiBase(value = "") {
 }
 
 function resolveApiBase() {
-  const configuredBase =
-    window.VOXA_CONFIG?.apiBase ||                 // ✅ MAIN (Vercel)
-    localStorage.getItem(STORAGE_KEYS.apiBase) ||  // ✅ manual override
-    document.querySelector('meta[name="voxa-api-base"]')?.content || 
-    "";
-
-  const normalizedConfiguredBase = normalizeApiBase(configuredBase);
-
-  if (normalizedConfiguredBase) {
-    return normalizedConfiguredBase;
-  }
-
-  return "/api"; // fallback for local
+  return "https://voxa-production-de05.up.railway.app/api";
 }
 
 function getApiBase() {
   return resolveApiBase();
-}
-
-function setApiBase(value) {
-  const normalizedBase = normalizeApiBase(value);
-  if (!normalizedBase) {
-    localStorage.removeItem(STORAGE_KEYS.apiBase);
-    return "/api";
-  }
-
-  localStorage.setItem(STORAGE_KEYS.apiBase, normalizedBase);
-  return normalizedBase;
 }
 
 function readJson(key, fallback) {
