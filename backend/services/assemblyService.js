@@ -124,24 +124,24 @@ function buildTranscriptPayload(session, meta = {}) {
 }
 
 async function createTemporaryToken(apiKey) {
-  const url = new URL("/v3/token", ASSEMBLY_API_BASE);
-  url.searchParams.set("expires_in_seconds", "300");
-  url.searchParams.set("max_session_duration_seconds", "1800");
-
-  const response = await fetch(url, {
-    method: "GET",
+  const response = await fetch("https://api.assemblyai.com/v2/realtime/token", {
+    method: "POST",
     headers: {
       Authorization: apiKey,
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify({
+      expires_in: 300,
+    }),
   });
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`AssemblyAI token request failed (${response.status}): ${text.slice(0, 200)}`);
+    throw new Error(`AssemblyAI token request failed (${response.status}): ${text}`);
   }
 
-  const payload = await response.json();
-  return payload.token;
+  const data = await response.json();
+  return data.token;
 }
 
 function connectAssemblySocket(session, token) {
