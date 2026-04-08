@@ -124,7 +124,7 @@ function buildTranscriptPayload(session, meta = {}) {
 }
 
 async function createTemporaryToken(apiKey) {
-  const response = await fetch("https://api.assemblyai.com/v2/realtime/token", {
+  const response = await fetch("https://api.assemblyai.com/v3/token", {
     method: "POST",
     headers: {
       Authorization: apiKey,
