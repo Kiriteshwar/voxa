@@ -123,42 +123,21 @@ function buildTranscriptPayload(session, meta = {}) {
   };
 }
 
-async function createTemporaryToken(apiKey) {
-  console.log("🔥 Using AssemblyAI endpoint: v2/realtime/token");
-
-  const response = await fetch("https://api.assemblyai.com/v2/realtime/token", {
-    method: "POST",
-    headers: {
-      Authorization: apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      expires_in: 300,
-    }),
-  });
-
-  const text = await response.text(); // 👈 IMPORTANT DEBUG
-  console.log("🔥 AssemblyAI RAW RESPONSE:", text);
-
-  if (!response.ok) {
-    throw new Error(`AssemblyAI token request failed (${response.status}): ${text}`);
-  }
-
-  return JSON.parse(text).token;
-}
-
 function connectAssemblySocket(session, token) {
-  const url = new URL(ASSEMBLY_WS_BASE);
-  url.searchParams.set("token", token);
+
   url.searchParams.set("sample_rate", String(session.sampleRate));
   url.searchParams.set("encoding", "pcm_s16le");
   url.searchParams.set("speech_model", "universal-streaming-multilingual");
   url.searchParams.set("format_turns", "true");
   url.searchParams.set("inactivity_timeout", "30");
 
-  const socket = new WebSocket(url);
-  socket.binaryType = "arraybuffer";
+  const socket = new WebSocket(url, {
+    headers: {
+      Authorization: process.env.ASSEMBLYAI_API_KEY,
+    },
+  });
 
+  socket.binaryType = "arraybuffer";
   session.socket = socket;
 
   socket.addEventListener("open", () => {
@@ -317,7 +296,6 @@ async function createStreamingSession(userId) {
     throw new Error("AssemblyAI is not configured on the server.");
   }
 
-  const token = await createTemporaryToken(apiKey);
   const session = {
     id: createSessionId(),
     userId,
@@ -338,7 +316,7 @@ async function createStreamingSession(userId) {
 
   sessions.set(session.id, session);
   scheduleSessionExpiry(session.id);
-  connectAssemblySocket(session, token);
+  connectAssemblySocket(session);
 
   return {
     sessionId: session.id,
