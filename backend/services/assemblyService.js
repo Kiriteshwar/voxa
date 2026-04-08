@@ -137,13 +137,14 @@ async function createTemporaryToken(apiKey) {
     }),
   });
 
+  const text = await response.text(); // 👈 IMPORTANT DEBUG
+  console.log("🔥 AssemblyAI RAW RESPONSE:", text);
+
   if (!response.ok) {
-    const text = await response.text();
     throw new Error(`AssemblyAI token request failed (${response.status}): ${text}`);
   }
 
-  const data = await response.json();
-  return data.token;
+  return JSON.parse(text).token;
 }
 
 function connectAssemblySocket(session, token) {
