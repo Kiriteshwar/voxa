@@ -31,9 +31,58 @@ const TIME_FRAGMENT_PATTERN = /\b(?:at|around|by|for)?\s*\d{1,2}(?::\d{2})?\s*(?
 const DATE_FRAGMENT_PATTERN = /\b(today|tomorrow|tonight|this weekend|next week)\b/gi;
 const REPEAT_FRAGMENT_PATTERN = /\b(every day|daily|every week|weekly|every morning|every evening)\b/gi;
 const LEADING_FILLERS_PATTERN = /^(?:hey|okay|ok|please|bro|listen|voxa)\s+/i;
+const COMMAND_PREFIX_PATTERNS = [
+  /^(?:i want to|i need to|i have to|can you|could you|please)\s+/i,
+  /^(?:add|create|set|start|begin)\s+(?:me\s+)?(?:a\s+)?reminder(?:\s+to|\s+for)?\s+/i,
+  /^(?:remind me(?:\s+to)?|alert me(?:\s+to)?|notify me(?:\s+to)?)\s+/i,
+  /^(?:add|create|write|jot)\s+(?:a\s+)?note(?:\s+that)?\s+/i,
+  /^(?:note that|remember that)\s+/i,
+  /^(?:add|create|start|begin|delete|remove|cancel|complete|finish|finished|mark|skip|stop|snooze|update)\s+/i,
+];
 
 function normalizeWhitespace(value = "") {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function splitWords(value = "") {
+  return normalizeWhitespace(value).split(" ").filter(Boolean);
+}
+
+function collapseConsecutiveWordRepeats(text = "") {
+  const words = splitWords(text);
+  const compact = [];
+
+  for (const word of words) {
+    const normalizedWord = word.toLowerCase();
+    const previousWord = compact[compact.length - 1]?.toLowerCase();
+    if (normalizedWord && normalizedWord === previousWord) {
+      continue;
+    }
+    compact.push(word);
+  }
+
+  return compact.join(" ");
+}
+
+function collapseRepeatedTailPhrases(text = "") {
+  const words = splitWords(text);
+  if (words.length < 4) {
+    return words.join(" ");
+  }
+
+  for (let phraseSize = Math.min(5, Math.floor(words.length / 2)); phraseSize >= 2; phraseSize -= 1) {
+    const tail = words.slice(-phraseSize).join(" ").toLowerCase();
+    const beforeTail = words.slice(-phraseSize * 2, -phraseSize).join(" ").toLowerCase();
+    if (tail && tail === beforeTail) {
+      return words.slice(0, -phraseSize).join(" ");
+    }
+  }
+
+  return words.join(" ");
+}
+
+function sanitizeSpokenText(text = "") {
+  return normalizeWhitespace(collapseRepeatedTailPhrases(collapseConsecutiveWordRepeats(text)));
 }
 
 function trimQuotes(value = "") {
@@ -114,39 +163,23 @@ function extractTime(normalizedText) {
 }
 
 function extractRawContent(rawText, action, entityType) {
-  const cleanedRaw = normalizeWhitespace(rawText.replace(LEADING_FILLERS_PATTERN, ""));
-  const actionPrefixes = [
-    /^i want to\s+/i,
-    /^please\s+/i,
-    /^can you\s+/i,
-    /^could you\s+/i,
-    /^note that\s+/i,
-    /^remind me to\s+/i,
-    /^remind me\s+/i,
-    /^add\s+/i,
-    /^create\s+/i,
-    /^start\s+/i,
-    /^begin\s+/i,
-    /^delete\s+/i,
-    /^remove\s+/i,
-    /^cancel\s+/i,
-    /^complete\s+/i,
-    /^finish\s+/i,
-    /^finished\s+/i,
-    /^mark\s+/i,
-    /^skip\s+/i,
-    /^stop\s+/i,
-    /^snooze\s+/i,
-    /^update\s+/i,
-  ];
+  let content = sanitizeSpokenText(rawText);
 
-  let content = cleanedRaw;
-  actionPrefixes.forEach((pattern) => {
-    content = content.replace(pattern, "");
-  });
+  let previous = "";
+  while (content && content !== previous) {
+    previous = content;
+    content = content
+      .replace(LEADING_FILLERS_PATTERN, "")
+      .replace(/^(?:a|an|the)\s+/i, "");
 
-  content = content.replace(/^(?:a|an|the)\s+/i, "");
-  content = content.replace(/\b(?:habit|task|note|reminder)\b/gi, " ");
+    COMMAND_PREFIX_PATTERNS.forEach((pattern) => {
+      content = content.replace(pattern, "");
+    });
+  }
+
+  content = content
+    .replace(/\b(?:habit|task|note|reminder)\b/gi, " ")
+    .replace(/^(?:me|to|for|that)\s+/i, "");
 
   if (action === "complete") {
     content = content.replace(/\b(?:done|completed|finished)\b/gi, " ");
@@ -161,12 +194,15 @@ function extractRawContent(rawText, action, entityType) {
   }
 
   content = removeDateAndTimeFragments(content);
+  content = content
+    .replace(/^(?:to|for|about|that)\s+/i, "")
+    .replace(/^(?:i need to|i have to|need to|have to)\s+/i, "");
 
   if (entityType === "note" && /^that\s+/i.test(content)) {
     content = content.replace(/^that\s+/i, "");
   }
 
-  return trimQuotes(content);
+  return trimQuotes(sanitizeSpokenText(content));
 }
 
 function extractTarget(rawText, action, entityType) {
@@ -229,7 +265,7 @@ function computeConfidence({ action, entityType, target, date, time, repeat, raw
 }
 
 function fallbackParse(text) {
-  const rawText = normalizeWhitespace(text || "");
+  const rawText = sanitizeSpokenText(text || "");
   const normalized = rawText.toLowerCase().replace(/\./g, "");
 
   if (!rawText) {

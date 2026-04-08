@@ -4,9 +4,59 @@
   const TIME_FRAGMENT_PATTERN = /\b(?:at|around|by|for)?\s*\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|am|pm)?\b/gi;
   const DATE_FRAGMENT_PATTERN = /\b(today|tomorrow|tonight|this weekend|next week)\b/gi;
   const REPEAT_FRAGMENT_PATTERN = /\b(every day|daily|every week|weekly|every morning|every evening)\b/gi;
+  const LEADING_FILLERS_PATTERN = /^(?:hey|please|bro|ok|okay|um|uh|hmm|listen)\s+/i;
+  const COMMAND_PREFIX_PATTERNS = [
+    /^(?:i want to|i need to|i have to|can you|could you|please)\s+/i,
+    /^(?:add|create|set|start|begin)\s+(?:me\s+)?(?:a\s+)?reminder(?:\s+to|\s+for)?\s+/i,
+    /^(?:remind me(?:\s+to)?|alert me(?:\s+to)?|notify me(?:\s+to)?)\s+/i,
+    /^(?:add|create|write|jot)\s+(?:a\s+)?note(?:\s+that)?\s+/i,
+    /^(?:note that|remember that)\s+/i,
+    /^(?:add|create|start|begin|delete|remove|cancel|complete|finished|finish|mark|skip|stop|snooze|update)\s+/i,
+  ];
 
   function normalizeWhitespace(value = "") {
     return value.replace(/\s+/g, " ").trim();
+  }
+
+  function splitWords(value = "") {
+    return normalizeWhitespace(value).split(" ").filter(Boolean);
+  }
+
+  function collapseConsecutiveWordRepeats(text = "") {
+    const words = splitWords(text);
+    const compact = [];
+
+    for (const word of words) {
+      const normalizedWord = word.toLowerCase();
+      const previousWord = compact[compact.length - 1]?.toLowerCase();
+      if (normalizedWord && normalizedWord === previousWord) {
+        continue;
+      }
+      compact.push(word);
+    }
+
+    return compact.join(" ");
+  }
+
+  function collapseRepeatedTailPhrases(text = "") {
+    const words = splitWords(text);
+    if (words.length < 4) {
+      return words.join(" ");
+    }
+
+    for (let phraseSize = Math.min(5, Math.floor(words.length / 2)); phraseSize >= 2; phraseSize -= 1) {
+      const tail = words.slice(-phraseSize).join(" ").toLowerCase();
+      const beforeTail = words.slice(-phraseSize * 2, -phraseSize).join(" ").toLowerCase();
+      if (tail && tail === beforeTail) {
+        return words.slice(0, -phraseSize).join(" ");
+      }
+    }
+
+    return words.join(" ");
+  }
+
+  function sanitizeSpokenText(text = "") {
+    return normalizeWhitespace(collapseRepeatedTailPhrases(collapseConsecutiveWordRepeats(text)));
   }
 
   function readCache() {
@@ -33,6 +83,7 @@
         .replace(/\b(?:a\.?m\.?|p\.?m\.?|am|pm)\b/gi, " ")
         .replace(DATE_FRAGMENT_PATTERN, " ")
         .replace(REPEAT_FRAGMENT_PATTERN, " ")
+        .replace(/\s+,/g, ",")
         .replace(/\s+[,.!?]/g, " ")
         .replace(/[,.!?]+$/g, "")
     );
@@ -129,13 +180,23 @@
   }
 
   function extractContent(rawText, action, entityType) {
-    let content = normalizeWhitespace(rawText);
+    let content = sanitizeSpokenText(rawText);
+
+    let previous = "";
+    while (content && content !== previous) {
+      previous = content;
+      content = content
+        .replace(LEADING_FILLERS_PATTERN, "")
+        .replace(/^(?:a|an|the)\s+/i, "");
+
+      COMMAND_PREFIX_PATTERNS.forEach((pattern) => {
+        content = content.replace(pattern, "");
+      });
+    }
+
     content = content
-      .replace(/^(?:hey|please|bro|ok|okay)\s+/i, "")
-      .replace(/^(?:i want to|can you|could you)\s+/i, "")
-      .replace(/^(?:add|create|start|begin|delete|remove|cancel|complete|finished|finish|mark|skip|stop|snooze|update)\s+/i, "")
-      .replace(/^(?:a|an|the)\s+/i, "")
-      .replace(/\b(?:habit|task|note|reminder)\b/gi, " ");
+      .replace(/\b(?:habit|task|note|reminder)\b/gi, " ")
+      .replace(/^(?:me|to|for|that)\s+/i, "");
 
     if (action === "complete") {
       content = content.replace(/\b(?:done|completed|finished)\b/gi, " ");
@@ -146,11 +207,15 @@
     }
 
     content = removeDateAndTimeFragments(content);
+    content = content
+      .replace(/^(?:to|for|about|that)\s+/i, "")
+      .replace(/^(?:i need to|i have to|need to|have to)\s+/i, "");
+
     if (entityType === "note") {
       content = content.replace(/^that\s+/i, "");
     }
 
-    return normalizeWhitespace(content);
+    return sanitizeSpokenText(content);
   }
 
   function buildCommand(overrides = {}) {
@@ -169,7 +234,7 @@
   }
 
   function quickParse(rawText) {
-    const input = normalizeWhitespace(rawText || "");
+    const input = sanitizeSpokenText(rawText || "");
     const cache = readCache();
     const cached = cache[input.toLowerCase()];
     if (cached) {

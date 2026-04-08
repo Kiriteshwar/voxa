@@ -41,10 +41,74 @@
   let isParsing = false;
   let finalTranscript = "";
   let interimTranscript = "";
+  let finalTranscriptChunks = new Map();
+  let interimTranscriptChunks = new Map();
   let parsedPreviews = [];
 
+  function normalizeWhitespace(text = "") {
+    return text.replace(/\s+/g, " ").trim();
+  }
+
+  function splitWords(text = "") {
+    return normalizeWhitespace(text).split(" ").filter(Boolean);
+  }
+
+  function collapseConsecutiveWordRepeats(text = "") {
+    const words = splitWords(text);
+    const compact = [];
+
+    for (const word of words) {
+      const normalizedWord = word.toLowerCase();
+      const previousWord = compact[compact.length - 1]?.toLowerCase();
+      if (normalizedWord && normalizedWord === previousWord) {
+        continue;
+      }
+      compact.push(word);
+    }
+
+    return compact.join(" ");
+  }
+
+  function collapseRepeatedTailPhrases(text = "") {
+    const words = splitWords(text);
+    if (words.length < 4) {
+      return words.join(" ");
+    }
+
+    for (let phraseSize = Math.min(5, Math.floor(words.length / 2)); phraseSize >= 2; phraseSize -= 1) {
+      const tail = words.slice(-phraseSize).join(" ").toLowerCase();
+      const beforeTail = words.slice(-phraseSize * 2, -phraseSize).join(" ").toLowerCase();
+      if (tail && tail === beforeTail) {
+        return words.slice(0, -phraseSize).join(" ");
+      }
+    }
+
+    return words.join(" ");
+  }
+
   function sanitizeTranscript(text) {
-    return (text || "").replace(/\s+/g, " ").trim();
+    return normalizeWhitespace(collapseRepeatedTailPhrases(collapseConsecutiveWordRepeats(text || "")));
+  }
+
+  function resetTranscriptState() {
+    finalTranscript = "";
+    interimTranscript = "";
+    finalTranscriptChunks = new Map();
+    interimTranscriptChunks = new Map();
+  }
+
+  function buildTranscriptFromChunks(map) {
+    return sanitizeTranscript(
+      [...map.entries()]
+        .sort((left, right) => left[0] - right[0])
+        .map(([, value]) => value)
+        .join(" ")
+    );
+  }
+
+  function renderLiveTranscript() {
+    const combinedText = sanitizeTranscript([finalTranscript, interimTranscript].filter(Boolean).join(" "));
+    liveText.textContent = combinedText || "Listening...";
   }
 
   function resetResult() {
@@ -129,31 +193,31 @@
     recognition.onstart = () => {
       recognitionRunning = true;
       console.debug("[Voice] recognition started", { sessionId: activeSessionId });
+      voiceFeedback.textContent = "Listening now. Speak naturally.";
     };
 
     recognition.onresult = (event) => {
-      const finalParts = [];
-      const interimParts = [];
-
-      for (let index = 0; index < event.results.length; index += 1) {
-        const text = sanitizeTranscript(event.results[index][0].transcript);
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const text = sanitizeTranscript(event.results[index][0]?.transcript || "");
         if (!text) {
           continue;
         }
 
         if (event.results[index].isFinal) {
-          finalParts.push(text);
+          finalTranscriptChunks.set(index, text);
+          interimTranscriptChunks.delete(index);
         } else {
-          interimParts.push(text);
+          interimTranscriptChunks.set(index, text);
         }
       }
 
-      finalTranscript = sanitizeTranscript(finalParts.join(" "));
-      interimTranscript = sanitizeTranscript(interimParts.join(" "));
-      liveText.textContent = sanitizeTranscript([finalTranscript, interimTranscript].join(" ")) || "Listening...";
+      finalTranscript = buildTranscriptFromChunks(finalTranscriptChunks);
+      interimTranscript = buildTranscriptFromChunks(interimTranscriptChunks);
+      renderLiveTranscript();
 
       console.debug("[Voice] transcript", {
         sessionId: activeSessionId,
+        resultIndex: event.resultIndex,
         finalTranscript,
         interimTranscript,
       });
@@ -189,6 +253,9 @@
       }
 
       if (shouldAutoRestart) {
+        interimTranscript = "";
+        interimTranscriptChunks = new Map();
+        renderLiveTranscript();
         window.setTimeout(() => {
           if (!recognitionRunning && shouldAutoRestart) {
             try {
@@ -345,8 +412,7 @@
     }
 
     activeSessionId += 1;
-    finalTranscript = "";
-    interimTranscript = "";
+    resetTranscriptState();
     shouldAutoRestart = true;
     manualStop = false;
     resetResult();
@@ -457,8 +523,7 @@
   function cancelVoice() {
     shouldAutoRestart = false;
     manualStop = false;
-    finalTranscript = "";
-    interimTranscript = "";
+    resetTranscriptState();
     liveText.textContent = "Your speech will appear here in real time.";
     voiceFeedback.textContent = "Nothing was changed. Start again whenever you are ready.";
     resetResult();

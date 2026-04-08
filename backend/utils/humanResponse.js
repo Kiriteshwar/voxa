@@ -15,6 +15,15 @@ function formatTime(time = "") {
   return `${hour}:${minute} ${meridiem}`;
 }
 
+function formatTitle(title = "") {
+  const trimmed = String(title || "").trim();
+  if (!trimmed) {
+    return "this item";
+  }
+
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
 function buildDetails(command) {
   const details = [];
   if (command.date) {
@@ -32,7 +41,7 @@ function buildDetails(command) {
 function generateHumanResponse(command, matchedItem = null) {
   const action = command.action || "create";
   const entity = matchedItem?.entityType || command.entityType || "item";
-  const title = matchedItem?.title || command.target || command.content || "this item";
+  const title = formatTitle(matchedItem?.title || command.target || command.content || "this item");
   const prettyTime = formatTime(command.time);
 
   if (action === "create" && entity === "reminder") {
