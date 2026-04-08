@@ -15,7 +15,7 @@ function normalizeApiBase(value = "") {
 }
 
 function resolveApiBase() {
-  return "https://voxa-production-de05.up.railway.app/api";
+  return "https://voxa-production-e0f5.up.railway.app/api";
 }
 
 function getApiBase() {
