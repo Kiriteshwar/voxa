@@ -1,4 +1,4 @@
-const CACHE_NAME = "voxa-habit-v5";
+const CACHE_NAME = "voxa-habit-v7";
 const APP_ASSETS = [
   "/",
   "/index.html",

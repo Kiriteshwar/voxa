@@ -2,9 +2,47 @@ const STORAGE_KEYS = {
   token: "voxa_token",
   user: "voxa_current_user",
   voiceUndo: "voxa_voice_undo",
+  apiBase: "voxa_api_base",
 };
 
-const API_BASE = "/api";
+function normalizeApiBase(value = "") {
+  const trimmed = String(value || "").trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    return "";
+  }
+
+  return trimmed.endsWith("/api") ? trimmed : `${trimmed}/api`;
+}
+
+function resolveApiBase() {
+  const configuredBase =
+    window.VOXA_CONFIG?.apiBase ||
+    document.querySelector('meta[name="voxa-api-base"]')?.content ||
+    localStorage.getItem(STORAGE_KEYS.apiBase) ||
+    "";
+
+  const normalizedConfiguredBase = normalizeApiBase(configuredBase);
+  if (normalizedConfiguredBase) {
+    return normalizedConfiguredBase;
+  }
+
+  return "/api";
+}
+
+function getApiBase() {
+  return resolveApiBase();
+}
+
+function setApiBase(value) {
+  const normalizedBase = normalizeApiBase(value);
+  if (!normalizedBase) {
+    localStorage.removeItem(STORAGE_KEYS.apiBase);
+    return "/api";
+  }
+
+  localStorage.setItem(STORAGE_KEYS.apiBase, normalizedBase);
+  return normalizedBase;
+}
 
 function readJson(key, fallback) {
   try {
@@ -220,14 +258,36 @@ async function request(path, options = {}) {
 
   debugLog("request", { path, method: config.method, body: options.body });
 
-  const response = await fetch(`${API_BASE}${path}`, config);
+  const response = await fetch(`${resolveApiBase()}${path}`, config);
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  const contentType = response.headers.get("content-type") || "";
+  const isJson = contentType.includes("application/json");
+  let data = null;
+
+  if (text && isJson) {
+    try {
+      data = JSON.parse(text);
+    } catch (_error) {
+      data = null;
+    }
+  }
 
   if (!response.ok) {
     if (response.status === 401) {
       clearSession();
     }
+
+    if (!isJson) {
+      const currentBase = resolveApiBase();
+      const sameOriginApi = currentBase === "/api";
+      const notFoundHint =
+        response.status === 404 && sameOriginApi
+          ? "The frontend is running, but the backend API is not available on this site. Open Connection settings and point VoxaHabit to your deployed backend URL."
+          : `Request failed (${response.status})`;
+
+      throw new Error(notFoundHint);
+    }
+
     throw new Error(data?.message || `Request failed (${response.status})`);
   }
 
@@ -236,6 +296,12 @@ async function request(path, options = {}) {
 }
 
 window.voxaApi = {
+  getApiBase() {
+    return getApiBase();
+  },
+  setApiBase(value) {
+    return setApiBase(value);
+  },
   getToken() {
     return localStorage.getItem(STORAGE_KEYS.token) || "";
   },

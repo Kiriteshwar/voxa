@@ -168,6 +168,23 @@ textarea {
   gap: 14px;
 }
 
+.connection-settings {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(22, 50, 79, 0.08);
+}
+
+.connection-settings summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.connection-settings[open] summary {
+  margin-bottom: 14px;
+}
+
 .field {
   display: grid;
   gap: 8px;

@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#16324f" />
     <title>VoxaHabit | Login</title>
-    <link rel="manifest" href="/manifest.json?v=6" />
-    <link rel="stylesheet" href="/style.css?v=6" />
+    <link rel="manifest" href="/manifest.json?v=7" />
+    <link rel="stylesheet" href="/style.css?v=7" />
   </head>
   <body class="auth-body" data-page="login">
     <main class="auth-layout">
@@ -33,10 +33,28 @@
         <p id="authMessage" class="support-text">
           New here? Register once and your local demo workspace is ready instantly.
         </p>
+
+        <details class="connection-settings">
+          <summary>Connection settings</summary>
+          <label class="field">
+            <span>API base URL</span>
+            <input
+              id="apiBaseInput"
+              type="url"
+              placeholder="https://your-backend-domain.com/api"
+              autocomplete="off"
+            />
+          </label>
+          <div class="button-row">
+            <button id="saveApiBaseButton" type="button" class="secondary-action">Save API URL</button>
+            <button id="resetApiBaseButton" type="button" class="secondary-action">Use Default</button>
+          </div>
+          <p id="apiBaseMessage" class="support-text"></p>
+        </details>
       </section>
     </main>
 
-    <script src="/api.js?v=6"></script>
-    <script src="/navigation.js?v=6"></script>
+    <script src="/api.js?v=7"></script>
+    <script src="/navigation.js?v=7"></script>
   </body>
 </html>

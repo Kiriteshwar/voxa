@@ -65,6 +65,19 @@
     const authMessage = document.getElementById("authMessage");
     const emailInput = document.getElementById("email");
     const passwordInput = document.getElementById("password");
+    const apiBaseInput = document.getElementById("apiBaseInput");
+    const apiBaseMessage = document.getElementById("apiBaseMessage");
+    const saveApiBaseButton = document.getElementById("saveApiBaseButton");
+    const resetApiBaseButton = document.getElementById("resetApiBaseButton");
+
+    if (apiBaseInput) {
+      const currentBase = window.voxaApi.getApiBase();
+      apiBaseInput.value = currentBase === "/api" ? "" : currentBase;
+      apiBaseMessage.textContent =
+        currentBase === "/api"
+          ? "Using the default same-origin API path."
+          : `Using ${currentBase}`;
+    }
 
     async function submitAuth(mode) {
       const email = emailInput.value.trim();
@@ -87,6 +100,19 @@
         authMessage.textContent = error.message;
       }
     }
+
+    saveApiBaseButton?.addEventListener("click", () => {
+      const savedBase = window.voxaApi.setApiBase(apiBaseInput.value);
+      apiBaseInput.value = savedBase === "/api" ? "" : savedBase;
+      apiBaseMessage.textContent =
+        savedBase === "/api" ? "Using the default same-origin API path." : `Saved ${savedBase}`;
+    });
+
+    resetApiBaseButton?.addEventListener("click", () => {
+      window.voxaApi.setApiBase("");
+      apiBaseInput.value = "";
+      apiBaseMessage.textContent = "Using the default same-origin API path.";
+    });
 
     authForm.addEventListener("submit", async (event) => {
       event.preventDefault();
