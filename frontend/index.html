@@ -8,6 +8,11 @@
   </head>
   <body>
     <script>
+      window.VOXA_CONFIG = {
+        apiBase: "https://voxa-production-de05.up.railway.app"
+      };
+    </script>
+    <script>
       const token = localStorage.getItem("voxa_token");
       window.location.replace(token ? "/pages/app.html" : "/pages/login.html");
     </script>

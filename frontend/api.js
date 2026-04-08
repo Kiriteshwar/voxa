@@ -16,17 +16,18 @@ function normalizeApiBase(value = "") {
 
 function resolveApiBase() {
   const configuredBase =
-    window.VOXA_CONFIG?.apiBase ||
-    document.querySelector('meta[name="voxa-api-base"]')?.content ||
-    localStorage.getItem(STORAGE_KEYS.apiBase) ||
+    window.VOXA_CONFIG?.apiBase ||                 // ✅ MAIN (Vercel)
+    localStorage.getItem(STORAGE_KEYS.apiBase) ||  // ✅ manual override
+    document.querySelector('meta[name="voxa-api-base"]')?.content || 
     "";
 
   const normalizedConfiguredBase = normalizeApiBase(configuredBase);
+
   if (normalizedConfiguredBase) {
     return normalizedConfiguredBase;
   }
 
-  return "/api";
+  return "/api"; // fallback for local
 }
 
 function getApiBase() {
