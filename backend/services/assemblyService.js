@@ -124,6 +124,8 @@ function buildTranscriptPayload(session, meta = {}) {
 }
 
 async function createTemporaryToken(apiKey) {
+  console.log("🔥 Using AssemblyAI endpoint: v3/token");
+
   const response = await fetch("https://api.assemblyai.com/v3/token", {
     method: "POST",
     headers: {
